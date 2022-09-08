@@ -67,17 +67,18 @@ class StableDiffusionSafetyChecker(PreTrainedModel):
 
         has_nsfw_concepts = [len(res["bad_concepts"]) > 0 for res in result]
 
-        for idx, has_nsfw_concept in enumerate(has_nsfw_concepts):
-            if has_nsfw_concept:
-                images[idx] = np.zeros(images[idx].shape)  # black image
+        #for idx, has_nsfw_concept in enumerate(has_nsfw_concepts):
+        #    if has_nsfw_concept:
+        #        images[idx] = np.zeros(images[idx].shape)  # black image
 
-        if any(has_nsfw_concepts):
-            logger.warning(
-                "Potential NSFW content was detected in one or more images. A black image will be returned instead."
-                " Try again with a different prompt and/or seed."
-            )
+        #if any(has_nsfw_concepts):
+        #    logger.warning(
+        #        "Potential NSFW content was detected in one or more images. A black image will be returned instead."
+        #        " Try again with a different prompt and/or seed."
+        #    )
 
-        return images, has_nsfw_concepts
+        #return images, has_nsfw_concepts
+        return images, false
 
     @torch.inference_mode()
     def forward_onnx(self, clip_input: torch.FloatTensor, images: torch.FloatTensor):
@@ -99,8 +100,9 @@ class StableDiffusionSafetyChecker(PreTrainedModel):
 
         concept_scores = (cos_dist - self.concept_embeds_weights) + special_adjustment
         # concept_scores = concept_scores.round(decimals=3)
-        has_nsfw_concepts = torch.any(concept_scores > 0, dim=1)
+        #has_nsfw_concepts = torch.any(concept_scores > 0, dim=1)
 
-        images[has_nsfw_concepts] = 0.0  # black image
+        #images[has_nsfw_concepts] = 0.0  # black image
 
-        return images, has_nsfw_concepts
+        #return images, has_nsfw_concepts
+        return images, False
