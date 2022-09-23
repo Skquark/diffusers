@@ -13,6 +13,7 @@ if is_torch_available() and is_transformers_available():
         StableDiffusionImg2ImgPipeline,
         StableDiffusionInpaintPipeline,
         StableDiffusionPipeline,
+        UnifiedPipeline,
     )
 
 if is_transformers_available() and is_onnx_available():
