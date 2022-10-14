@@ -298,8 +298,6 @@ class StableDiffusionPipeline(DiffusionPipeline):
             else:
                 latents = torch.randn(latents_shape, generator=generator, device=self.device, dtype=latents_dtype)
         else:
-                latents = torch.randn(latents_shape, generator=generator, device=self.device, dtype=latents_dtype)
-        else:
             if latents.shape != latents_shape:
                 raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {latents_shape}")
             latents = latents.to(self.device)
