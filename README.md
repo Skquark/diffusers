@@ -1,6 +1,6 @@
 <p align="center">
     <br>
-    <img src="docs/source/imgs/diffusers_library.jpg" width="400"/>
+    <img src="https://github.com/huggingface/diffusers/raw/main/docs/source/imgs/diffusers_library.jpg" width="400"/>
     <br>
 <p>
 <p align="center">
@@ -76,17 +76,18 @@ You need to accept the model license before downloading or using the Stable Diff
 
 ### Text-to-Image generation with Stable Diffusion
 
+We recommend using the model in [half-precision (`fp16`)](https://pytorch.org/blog/accelerating-training-on-nvidia-gpus-with-pytorch-automatic-mixed-precision/) as it gives almost always the same results as full
+precision while being roughly twice as fast and requiring half the amount of GPU RAM.
+
 ```python
 # make sure you're logged in with `huggingface-cli login`
-from torch import autocast
 from diffusers import StableDiffusionPipeline
 
-pipe = StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", use_auth_token=True)
+pipe = StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4", torch_type=torch.float16, revision="fp16")
 pipe = pipe.to("cuda")
 
 prompt = "a photo of an astronaut riding a horse on mars"
-with autocast("cuda"):
-    image = pipe(prompt).images[0]  
+image = pipe(prompt).images[0]  
 ```
 
 **Note**: If you don't want to use the token, you can also simply download the model weights
@@ -106,12 +107,11 @@ pipe = StableDiffusionPipeline.from_pretrained("./stable-diffusion-v1-4")
 pipe = pipe.to("cuda")
 
 prompt = "a photo of an astronaut riding a horse on mars"
-with autocast("cuda"):
-    image = pipe(prompt).images[0]  
+image = pipe(prompt).images[0]  
 ```
 
-If you are limited by GPU memory, you might want to consider using the model in `fp16` as 
-well as chunking the attention computation.
+If you are limited by GPU memory, you might want to consider chunking the attention computation in addition 
+to using `fp16`.
 The following snippet should result in less than 4GB VRAM.
 
 ```python
@@ -119,17 +119,15 @@ pipe = StableDiffusionPipeline.from_pretrained(
     "CompVis/stable-diffusion-v1-4", 
     revision="fp16", 
     torch_dtype=torch.float16,
-    use_auth_token=True
 )
 pipe = pipe.to("cuda")
 
 prompt = "a photo of an astronaut riding a horse on mars"
 pipe.enable_attention_slicing()
-with autocast("cuda"):
-    image = pipe(prompt).images[0]  
+image = pipe(prompt).images[0]  
 ```
 
-Finally, if you wish to use a different scheduler, you can simply instantiate
+If you wish to use a different scheduler, you can simply instantiate
 it before the pipeline and pass it to `from_pretrained`.
     
 ```python
@@ -146,13 +144,29 @@ pipe = StableDiffusionPipeline.from_pretrained(
     revision="fp16", 
     torch_dtype=torch.float16,
     scheduler=lms,
-    use_auth_token=True
 )
 pipe = pipe.to("cuda")
 
 prompt = "a photo of an astronaut riding a horse on mars"
-with autocast("cuda"):
-    image = pipe(prompt).images[0]  
+image = pipe(prompt).images[0]  
+    
+image.save("astronaut_rides_horse.png")
+```
+
+If you want to run Stable Diffusion on CPU or you want to have maximum precision on GPU, 
+please run the model in the default *full-precision* setting:
+
+```python
+# make sure you're logged in with `huggingface-cli login`
+from diffusers import StableDiffusionPipeline
+
+pipe = StableDiffusionPipeline.from_pretrained("CompVis/stable-diffusion-v1-4")
+
+# disable the following line if you run on CPU
+pipe = pipe.to("cuda")
+
+prompt = "a photo of an astronaut riding a horse on mars"
+image = pipe(prompt).images[0]  
     
 image.save("astronaut_rides_horse.png")
 ```
@@ -162,7 +176,6 @@ image.save("astronaut_rides_horse.png")
 The `StableDiffusionImg2ImgPipeline` lets you pass a text prompt and an initial image to condition the generation of new images.
 
 ```python
-from torch import autocast
 import requests
 import torch
 from PIL import Image
@@ -177,10 +190,9 @@ pipe = StableDiffusionImg2ImgPipeline.from_pretrained(
     model_id_or_path,
     revision="fp16", 
     torch_dtype=torch.float16,
-    use_auth_token=True
 )
 # or download via git clone https://huggingface.co/CompVis/stable-diffusion-v1-4
-# and pass `model_id_or_path="./stable-diffusion-v1-4"` without having to use `use_auth_token=True`.
+# and pass `model_id_or_path="./stable-diffusion-v1-4"`.
 pipe = pipe.to(device)
 
 # let's download an initial image
@@ -192,8 +204,7 @@ init_image = init_image.resize((768, 512))
 
 prompt = "A fantasy landscape, trending on artstation"
 
-with autocast("cuda"):
-    images = pipe(prompt=prompt, init_image=init_image, strength=0.75, guidance_scale=7.5).images
+images = pipe(prompt=prompt, init_image=init_image, strength=0.75, guidance_scale=7.5).images
 
 images[0].save("fantasy_landscape.png")
 ```
@@ -206,7 +217,6 @@ The `StableDiffusionInpaintPipeline` lets you edit specific parts of an image by
 ```python
 from io import BytesIO
 
-from torch import autocast
 import torch
 import requests
 import PIL
@@ -229,15 +239,13 @@ pipe = StableDiffusionInpaintPipeline.from_pretrained(
     model_id_or_path,
     revision="fp16", 
     torch_dtype=torch.float16,
-    use_auth_token=True
 )
 # or download via git clone https://huggingface.co/CompVis/stable-diffusion-v1-4
-# and pass `model_id_or_path="./stable-diffusion-v1-4"` without having to use `use_auth_token=True`.
+# and pass `model_id_or_path="./stable-diffusion-v1-4"`.
 pipe = pipe.to(device)
 
 prompt = "a cat sitting on a bench"
-with autocast("cuda"):
-    images = pipe(prompt=prompt, init_image=init_image, mask_image=mask_image, strength=0.75).images
+images = pipe(prompt=prompt, init_image=init_image, mask_image=mask_image, strength=0.75).images
 
 images[0].save("cat_on_bench.png")
 ```
@@ -260,7 +268,6 @@ If you want to run the code yourself 💻, you can try out:
 - [Text-to-Image Latent Diffusion](https://huggingface.co/CompVis/ldm-text2im-large-256)
 ```python
 # !pip install diffusers transformers
-from torch import autocast
 from diffusers import DiffusionPipeline
 
 device = "cuda"
@@ -272,8 +279,7 @@ ldm = ldm.to(device)
 
 # run pipeline in inference (sample random noise and denoise)
 prompt = "A painting of a squirrel eating a burger"
-with autocast(device):
-    image = ldm([prompt], num_inference_steps=50, eta=0.3, guidance_scale=6).images[0]
+image = ldm([prompt], num_inference_steps=50, eta=0.3, guidance_scale=6).images[0]
 
 # save image
 image.save("squirrel.png")
@@ -281,7 +287,6 @@ image.save("squirrel.png")
 - [Unconditional Diffusion with discrete scheduler](https://huggingface.co/google/ddpm-celebahq-256)
 ```python
 # !pip install diffusers
-from torch import autocast
 from diffusers import DDPMPipeline, DDIMPipeline, PNDMPipeline
 
 model_id = "google/ddpm-celebahq-256"
@@ -292,8 +297,7 @@ ddpm = DDPMPipeline.from_pretrained(model_id)  # you can replace DDPMPipeline wi
 ddpm.to(device)
 
 # run pipeline in inference (sample random noise and denoise)
-with autocast("cuda"):
-    image = ddpm().images[0]
+image = ddpm().images[0]
 
 # save image
 image.save("ddpm_generated_image.png")
