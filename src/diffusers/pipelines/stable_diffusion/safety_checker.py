@@ -81,7 +81,7 @@ class StableDiffusionSafetyChecker(PreTrainedModel):
         #    )
 
         #return images, has_nsfw_concepts
-        return images, false
+        return images, False
 
     @torch.no_grad()
     def forward_onnx(self, clip_input: torch.FloatTensor, images: torch.FloatTensor):
