@@ -436,6 +436,8 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
         guidance_scale: Optional[float] = 7.5,
         num_inference_steps: Optional[int] = 50,
         eta: Optional[float] = 0.0,
+        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
+        callback_steps: Optional[int] = 1,
     ) -> List[str]:
         """
         Walks through a series of prompts and seeds, interpolating between them and saving the results to disk.
@@ -514,6 +516,8 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
                         guidance_scale=guidance_scale,
                         eta=eta,
                         num_inference_steps=num_inference_steps,
+                        callback=callback,
+                        callback_steps=callback_steps,
                     )
                     noise_batch, embeds_batch = None, None
 
