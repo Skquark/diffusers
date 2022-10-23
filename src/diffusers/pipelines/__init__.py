@@ -18,7 +18,7 @@ if is_torch_available() and is_transformers_available():
         StableDiffusionInpaintPipeline,
         StableDiffusionInpaintPipelineLegacy,
         StableDiffusionPipeline,
-        UnifiedPipeline,
+        #UnifiedPipeline,
     )
 
 if is_transformers_available() and is_onnx_available():
