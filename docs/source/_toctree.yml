@@ -36,7 +36,7 @@
   - local: optimization/onnx
     title: "ONNX"
   - local: optimization/open_vino
-    title: "Open Vino"
+    title: "OpenVINO"
   - local: optimization/mps
     title: "MPS"
   title: "Optimization/Special Hardware"
@@ -92,5 +92,7 @@
       title: "Stable Diffusion"
     - local: api/pipelines/stochastic_karras_ve
       title: "Stochastic Karras VE"
+    - local: api/pipelines/dance_diffusion
+      title: "Dance Diffusion"
     title: "Pipelines"
   title: "API"
