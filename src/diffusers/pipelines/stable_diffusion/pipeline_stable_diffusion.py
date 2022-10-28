@@ -124,14 +124,18 @@ class StableDiffusionPipeline(DiffusionPipeline):
         # set slice_size = `None` to disable `attention slicing`
         self.enable_attention_slicing(None)
 
-    def cuda_with_minimal_gpu_usage(self):
+    def enable_sequential_cpu_offload(self):
+        r"""
+        Offloads all models to CPU using accelerate, significantly reducing memory usage. When called, unet,
+        text_encoder, vae and safety checker have their state dicts saved to CPU and then are moved to a
+        `torch.device('meta') and loaded to GPU only when their specific submodule has its `forward` method called.
+        """
         if is_accelerate_available():
             from accelerate import cpu_offload
         else:
             raise ImportError("Please install accelerate via `pip install accelerate`")
 
         device = torch.device("cuda")
-        self.enable_attention_slicing(1)
 
         for cpu_offloaded_model in [self.unet, self.text_encoder, self.vae, self.safety_checker]:
             cpu_offload(cpu_offloaded_model, device)
