@@ -15,7 +15,7 @@
     </a>
 </p>
 
-### This fork designed for use with Skquark's [**Enhanced Stable Diffusion**](https://colab.research.google.com/github/Skquark/structured-prompt-generator/blob/main/Enhanced_Stable_Diffusion_with_diffusers.ipynb) Colab Notebook
+### This fork designed for use with Skquark's [**Enhanced Stable Diffusion**](https://colab.research.google.com/github/Skquark/structured-prompt-generator/blob/main/Enhanced_Stable_Diffusion_with_diffusers.ipynb) and [**Stable Diffusion Deluxe** Web App](https://colab.research.google.com/github/Skquark/AI-Friends/blob/main/Stable_Diffusion_Deluxe.ipynb) Colab Notebook
 
 🤗 Diffusers provides pretrained diffusion models across multiple modalities, such as vision and audio, and serves
 as a modular toolbox for inference and training of diffusion models.
