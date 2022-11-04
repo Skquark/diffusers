@@ -14,8 +14,8 @@ from diffusers.models import AutoencoderKL, UNet2DConditionModel
 from diffusers.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
-from diffusers.schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler, EulerAncestralDiscreteScheduler, EulerDiscreteScheduler
-from diffusers.utils import deprecate, logging
+from diffusers.schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler
+from diffusers.utils import deprecate, is_accelerate_available, logging
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
 
 
@@ -343,13 +343,15 @@ def get_weighted_text_embeddings(
     # assign weights to the prompts and normalize in the sense of mean
     # TODO: should we normalize by chunk or in a whole (current implementation)?
     if (not skip_parsing) and (not skip_weighting):
-        previous_mean = text_embeddings.mean(axis=[-2, -1])
+        previous_mean = text_embeddings.float().mean(axis=[-2, -1]).to(text_embeddings.dtype)
         text_embeddings *= prompt_weights.unsqueeze(-1)
-        text_embeddings *= (previous_mean / text_embeddings.mean(axis=[-2, -1])).unsqueeze(-1).unsqueeze(-1)
+        current_mean = text_embeddings.float().mean(axis=[-2, -1]).to(text_embeddings.dtype)
+        text_embeddings *= (previous_mean / current_mean).unsqueeze(-1).unsqueeze(-1)
         if uncond_prompt is not None:
-            previous_mean = uncond_embeddings.mean(axis=[-2, -1])
+            previous_mean = uncond_embeddings.float().mean(axis=[-2, -1]).to(uncond_embeddings.dtype)
             uncond_embeddings *= uncond_weights.unsqueeze(-1)
-            uncond_embeddings *= (previous_mean / uncond_embeddings.mean(axis=[-2, -1])).unsqueeze(-1).unsqueeze(-1)
+            current_mean = uncond_embeddings.float().mean(axis=[-2, -1]).to(uncond_embeddings.dtype)
+            uncond_embeddings *= (previous_mean / current_mean).unsqueeze(-1).unsqueeze(-1)
 
     if uncond_prompt is not None:
         return text_embeddings, uncond_embeddings
@@ -455,6 +457,24 @@ class StableDiffusionLongPromptWeightingPipeline(DiffusionPipeline):
             feature_extractor=feature_extractor,
         )
 
+    def enable_xformers_memory_efficient_attention(self):
+        r"""
+        Enable memory efficient attention as implemented in xformers.
+
+        When this option is enabled, you should observe lower GPU memory usage and a potential speed up at inference
+        time. Speed up at training time is not guaranteed.
+
+        Warning: When Memory Efficient Attention and Sliced attention are both enabled, the Memory Efficient Attention
+        is used.
+        """
+        self.unet.set_use_memory_efficient_attention_xformers(True)
+
+    def disable_xformers_memory_efficient_attention(self):
+        r"""
+        Disable memory efficient attention as implemented in xformers.
+        """
+        self.unet.set_use_memory_efficient_attention_xformers(False)
+
     def enable_attention_slicing(self, slice_size: Optional[Union[str, int]] = "auto"):
         r"""
         Enable sliced attention computation.
@@ -481,6 +501,23 @@ class StableDiffusionLongPromptWeightingPipeline(DiffusionPipeline):
         """
         # set slice_size = `None` to disable `attention slicing`
         self.enable_attention_slicing(None)
+
+    def enable_sequential_cpu_offload(self):
+        r"""
+        Offloads all models to CPU using accelerate, significantly reducing memory usage. When called, unet,
+        text_encoder, vae and safety checker have their state dicts saved to CPU and then are moved to a
+        `torch.device('meta') and loaded to GPU only when their specific submodule has its `forward` method called.
+        """
+        if is_accelerate_available():
+            from accelerate import cpu_offload
+        else:
+            raise ImportError("Please install accelerate via `pip install accelerate`")
+
+        device = self.device
+
+        for cpu_offloaded_model in [self.unet, self.text_encoder, self.vae, self.safety_checker]:
+            if cpu_offloaded_model is not None:
+                cpu_offload(cpu_offloaded_model, device)
 
     @torch.no_grad()
     def __call__(
