@@ -1,9 +1,6 @@
 import inspect
-import time
-from pathlib import Path
 from typing import Callable, List, Optional, Union
 
-import numpy as np
 import torch
 
 from diffusers.configuration_utils import FrozenDict
@@ -11,49 +8,61 @@ from diffusers.models import AutoencoderKL, UNet2DConditionModel
 from diffusers.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
-from diffusers.schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler, DPMSolverMultistepScheduler, EulerDiscreteScheduler, EulerAncestralDiscreteScheduler
+from diffusers.schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler
 from diffusers.utils import deprecate, logging
-from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
+from transformers import (
+    CLIPFeatureExtractor,
+    CLIPTextModel,
+    CLIPTokenizer,
+    MBart50TokenizerFast,
+    MBartForConditionalGeneration,
+    pipeline,
+)
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-def slerp(t, v0, v1, DOT_THRESHOLD=0.9995):
-    """helper function to spherically interpolate two arrays v1 v2"""
+def detect_language(pipe, prompt, batch_size):
+    """helper function to detect language(s) of prompt"""
 
-    if not isinstance(v0, np.ndarray):
-        inputs_are_torch = True
-        input_device = v0.device
-        v0 = v0.cpu().numpy()
-        v1 = v1.cpu().numpy()
-
-    dot = np.sum(v0 * v1 / (np.linalg.norm(v0) * np.linalg.norm(v1)))
-    if np.abs(dot) > DOT_THRESHOLD:
-        v2 = (1 - t) * v0 + t * v1
+    if batch_size == 1:
+        preds = pipe(prompt, top_k=1, truncation=True, max_length=128)
+        return preds[0]["label"]
     else:
-        theta_0 = np.arccos(dot)
-        sin_theta_0 = np.sin(theta_0)
-        theta_t = theta_0 * t
-        sin_theta_t = np.sin(theta_t)
-        s0 = np.sin(theta_0 - theta_t) / sin_theta_0
-        s1 = sin_theta_t / sin_theta_0
-        v2 = s0 * v0 + s1 * v1
+        detected_languages = []
+        for p in prompt:
+            preds = pipe(p, top_k=1, truncation=True, max_length=128)
+            detected_languages.append(preds[0]["label"])
 
-    if inputs_are_torch:
-        v2 = torch.from_numpy(v2).to(input_device)
-
-    return v2
+        return detected_languages
 
 
-class StableDiffusionWalkPipeline(DiffusionPipeline):
+def translate_prompt(prompt, translation_tokenizer, translation_model, device):
+    """helper function to translate prompt to English"""
+
+    encoded_prompt = translation_tokenizer(prompt, return_tensors="pt").to(device)
+    generated_tokens = translation_model.generate(**encoded_prompt, max_new_tokens=1000)
+    en_trans = translation_tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+
+    return en_trans[0]
+
+
+class MultilingualStableDiffusion(DiffusionPipeline):
     r"""
-    Pipeline for text-to-image generation using Stable Diffusion.
+    Pipeline for text-to-image generation using Stable Diffusion in different languages.
 
     This model inherits from [`DiffusionPipeline`]. Check the superclass documentation for the generic methods the
     library implements for all the pipelines (such as downloading or saving, running on a particular device, etc.)
 
     Args:
+        detection_pipeline ([`pipeline`]):
+            Transformers pipeline to detect prompt's language.
+        translation_model ([`MBartForConditionalGeneration`]):
+            Model to translate prompt to English, if necessary. Please refer to the
+            [model card](https://huggingface.co/docs/transformers/model_doc/mbart) for details.
+        translation_tokenizer ([`MBart50TokenizerFast`]):
+            Tokenizer of the translation model.
         vae ([`AutoencoderKL`]):
             Variational Auto-Encoder (VAE) Model to encode and decode images to and from latent representations.
         text_encoder ([`CLIPTextModel`]):
@@ -65,22 +74,25 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
             [CLIPTokenizer](https://huggingface.co/docs/transformers/v4.21.0/en/model_doc/clip#transformers.CLIPTokenizer).
         unet ([`UNet2DConditionModel`]): Conditional U-Net architecture to denoise the encoded image latents.
         scheduler ([`SchedulerMixin`]):
-            A scheduler to be used in combination with `unet` to denoise the encoded image latents. Can be one of
+            A scheduler to be used in combination with `unet` to denoise the encoded image latens. Can be one of
             [`DDIMScheduler`], [`LMSDiscreteScheduler`], or [`PNDMScheduler`].
         safety_checker ([`StableDiffusionSafetyChecker`]):
             Classification module that estimates whether generated images could be considered offensive or harmful.
-            Please, refer to the [model card](https://huggingface.co/CompVis/stable-diffusion-v1-4) for details.
+            Please, refer to the [model card](https://huggingface.co/runwayml/stable-diffusion-v1-5) for details.
         feature_extractor ([`CLIPFeatureExtractor`]):
             Model that extracts features from generated images to be used as inputs for the `safety_checker`.
     """
 
     def __init__(
         self,
+        detection_pipeline: pipeline,
+        translation_model: MBartForConditionalGeneration,
+        translation_tokenizer: MBart50TokenizerFast,
         vae: AutoencoderKL,
         text_encoder: CLIPTextModel,
         tokenizer: CLIPTokenizer,
         unet: UNet2DConditionModel,
-        scheduler: Union[DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler, DPMSolverMultistepScheduler, EulerDiscreteScheduler, EulerAncestralDiscreteScheduler],
+        scheduler: Union[DDIMScheduler, PNDMScheduler, LMSDiscreteScheduler],
         safety_checker: StableDiffusionSafetyChecker,
         feature_extractor: CLIPFeatureExtractor,
     ):
@@ -100,8 +112,7 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
             new_config["steps_offset"] = 1
             scheduler._internal_dict = FrozenDict(new_config)
 
-        #if safety_checker is None:
-        if False:
+        if safety_checker is None:
             logger.warn(
                 f"You have disabled the safety checker for {self.__class__} by passing `safety_checker=None`. Ensure"
                 " that you abide to the conditions of the Stable Diffusion license and do not expose unfiltered"
@@ -112,6 +123,9 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
             )
 
         self.register_modules(
+            detection_pipeline=detection_pipeline,
+            translation_model=translation_model,
+            translation_tokenizer=translation_tokenizer,
             vae=vae,
             text_encoder=text_encoder,
             tokenizer=tokenizer,
@@ -151,7 +165,7 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
     @torch.no_grad()
     def __call__(
         self,
-        prompt: Optional[Union[str, List[str]]] = None,
+        prompt: Union[str, List[str]],
         height: int = 512,
         width: int = 512,
         num_inference_steps: int = 50,
@@ -165,15 +179,14 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: Optional[int] = 1,
-        text_embeddings: Optional[torch.FloatTensor] = None,
         **kwargs,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
 
         Args:
-            prompt (`str` or `List[str]`, *optional*, defaults to `None`):
-                The prompt or prompts to guide the image generation. If not provided, `text_embeddings` is required.
+            prompt (`str` or `List[str]`):
+                The prompt or prompts to guide the image generation. Can be in different languages.
             height (`int`, *optional*, defaults to 512):
                 The height in pixels of the generated image.
             width (`int`, *optional*, defaults to 512):
@@ -214,10 +227,6 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
             callback_steps (`int`, *optional*, defaults to 1):
                 The frequency at which the `callback` function will be called. If not specified, the callback will be
                 called at every step.
-            text_embeddings (`torch.FloatTensor`, *optional*, defaults to `None`):
-                Pre-generated text embeddings to be used as inputs for image generation. Can be used in place of
-                `prompt` to avoid re-computing the embeddings. If not provided, the embeddings will be generated from
-                the supplied `prompt`.
 
         Returns:
             [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] or `tuple`:
@@ -226,6 +235,12 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
             list of `bool`s denoting whether the corresponding generated image likely represents "not-safe-for-work"
             (nsfw) content, according to the `safety_checker`.
         """
+        if isinstance(prompt, str):
+            batch_size = 1
+        elif isinstance(prompt, list):
+            batch_size = len(prompt)
+        else:
+            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
 
         if height % 8 != 0 or width % 8 != 0:
             raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
@@ -238,33 +253,36 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
                 f" {type(callback_steps)}."
             )
 
-        if text_embeddings is None:
-            if isinstance(prompt, str):
-                batch_size = 1
-            elif isinstance(prompt, list):
-                batch_size = len(prompt)
-            else:
-                raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+        # detect language and translate if necessary
+        prompt_language = detect_language(self.detection_pipeline, prompt, batch_size)
+        if batch_size == 1 and prompt_language != "en":
+            prompt = translate_prompt(prompt, self.translation_tokenizer, self.translation_model, self.device)
 
-            # get prompt text embeddings
-            text_inputs = self.tokenizer(
-                prompt,
-                padding="max_length",
-                max_length=self.tokenizer.model_max_length,
-                return_tensors="pt",
+        if isinstance(prompt, list):
+            for index in range(batch_size):
+                if prompt_language[index] != "en":
+                    p = translate_prompt(
+                        prompt[index], self.translation_tokenizer, self.translation_model, self.device
+                    )
+                    prompt[index] = p
+
+        # get prompt text embeddings
+        text_inputs = self.tokenizer(
+            prompt,
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length,
+            return_tensors="pt",
+        )
+        text_input_ids = text_inputs.input_ids
+
+        if text_input_ids.shape[-1] > self.tokenizer.model_max_length:
+            removed_text = self.tokenizer.batch_decode(text_input_ids[:, self.tokenizer.model_max_length :])
+            logger.warning(
+                "The following part of your input was truncated because CLIP can only handle sequences up to"
+                f" {self.tokenizer.model_max_length} tokens: {removed_text}"
             )
-            text_input_ids = text_inputs.input_ids
-
-            if text_input_ids.shape[-1] > self.tokenizer.model_max_length:
-                removed_text = self.tokenizer.batch_decode(text_input_ids[:, self.tokenizer.model_max_length :])
-                print(
-                    "The following part of your input was truncated because CLIP can only handle sequences up to"
-                    f" {self.tokenizer.model_max_length} tokens: {removed_text}"
-                )
-                text_input_ids = text_input_ids[:, : self.tokenizer.model_max_length]
-            text_embeddings = self.text_encoder(text_input_ids.to(self.device))[0]
-        else:
-            batch_size = text_embeddings.shape[0]
+            text_input_ids = text_input_ids[:, : self.tokenizer.model_max_length]
+        text_embeddings = self.text_encoder(text_input_ids.to(self.device))[0]
 
         # duplicate text embeddings for each generation per prompt, using mps friendly method
         bs_embed, seq_len, _ = text_embeddings.shape
@@ -286,7 +304,14 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
                     f" {type(prompt)}."
                 )
             elif isinstance(negative_prompt, str):
-                uncond_tokens = [negative_prompt]
+                # detect language and translate it if necessary
+                negative_prompt_language = detect_language(self.detection_pipeline, negative_prompt, batch_size)
+                if negative_prompt_language != "en":
+                    negative_prompt = translate_prompt(
+                        negative_prompt, self.translation_tokenizer, self.translation_model, self.device
+                    )
+                if isinstance(negative_prompt, str):
+                    uncond_tokens = [negative_prompt]
             elif batch_size != len(negative_prompt):
                 raise ValueError(
                     f"`negative_prompt`: {negative_prompt} has batch size {len(negative_prompt)}, but `prompt`:"
@@ -294,9 +319,18 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
                     " the batch size of `prompt`."
                 )
             else:
+                # detect language and translate it if necessary
+                if isinstance(negative_prompt, list):
+                    negative_prompt_languages = detect_language(self.detection_pipeline, negative_prompt, batch_size)
+                    for index in range(batch_size):
+                        if negative_prompt_languages[index] != "en":
+                            p = translate_prompt(
+                                negative_prompt[index], self.translation_tokenizer, self.translation_model, self.device
+                            )
+                            negative_prompt[index] = p
                 uncond_tokens = negative_prompt
 
-            max_length = self.tokenizer.model_max_length
+            max_length = text_input_ids.shape[-1]
             uncond_input = self.tokenizer(
                 uncond_tokens,
                 padding="max_length",
@@ -400,130 +434,3 @@ class StableDiffusionWalkPipeline(DiffusionPipeline):
             return (image, has_nsfw_concept)
 
         return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept)
-
-    def embed_text(self, text):
-        """takes in text and turns it into text embeddings"""
-        text_input = self.tokenizer(
-            text,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            truncation=True,
-            return_tensors="pt",
-        )
-        with torch.no_grad():
-            embed = self.text_encoder(text_input.input_ids.to(self.device))[0]
-        return embed
-
-    def get_noise(self, seed, dtype=torch.float32, height=512, width=512):
-        """Takes in random seed and returns corresponding noise vector"""
-        return torch.randn(
-            (1, self.unet.in_channels, height // 8, width // 8),
-            generator=torch.Generator(device=self.device).manual_seed(seed),
-            device=self.device,
-            dtype=dtype,
-        )
-
-    def walk(
-        self,
-        prompts: List[str],
-        seeds: List[int],
-        num_interpolation_steps: Optional[int] = 6,
-        output_dir: Optional[str] = "./dreams",
-        name: Optional[str] = None,
-        batch_size: Optional[int] = 1,
-        height: Optional[int] = 512,
-        width: Optional[int] = 512,
-        guidance_scale: Optional[float] = 7.5,
-        num_inference_steps: Optional[int] = 50,
-        eta: Optional[float] = 0.0,
-        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
-        callback_steps: Optional[int] = 1,
-    ) -> List[str]:
-        """
-        Walks through a series of prompts and seeds, interpolating between them and saving the results to disk.
-
-        Args:
-            prompts (`List[str]`):
-                List of prompts to generate images for.
-            seeds (`List[int]`):
-                List of seeds corresponding to provided prompts. Must be the same length as prompts.
-            num_interpolation_steps (`int`, *optional*, defaults to 6):
-                Number of interpolation steps to take between prompts.
-            output_dir (`str`, *optional*, defaults to `./dreams`):
-                Directory to save the generated images to.
-            name (`str`, *optional*, defaults to `None`):
-                Subdirectory of `output_dir` to save the generated images to. If `None`, the name will
-                be the current time.
-            batch_size (`int`, *optional*, defaults to 1):
-                Number of images to generate at once.
-            height (`int`, *optional*, defaults to 512):
-                Height of the generated images.
-            width (`int`, *optional*, defaults to 512):
-                Width of the generated images.
-            guidance_scale (`float`, *optional*, defaults to 7.5):
-                Guidance scale as defined in [Classifier-Free Diffusion Guidance](https://arxiv.org/abs/2207.12598).
-                `guidance_scale` is defined as `w` of equation 2. of [Imagen
-                Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
-                1`. Higher guidance scale encourages to generate images that are closely linked to the text `prompt`,
-                usually at the expense of lower image quality.
-            num_inference_steps (`int`, *optional*, defaults to 50):
-                The number of denoising steps. More denoising steps usually lead to a higher quality image at the
-                expense of slower inference.
-            eta (`float`, *optional*, defaults to 0.0):
-                Corresponds to parameter eta (η) in the DDIM paper: https://arxiv.org/abs/2010.02502. Only applies to
-                [`schedulers.DDIMScheduler`], will be ignored for others.
-
-        Returns:
-            `List[str]`: List of paths to the generated images.
-        """
-        if not len(prompts) == len(seeds):
-            raise ValueError(
-                f"Number of prompts and seeds must be equalGot {len(prompts)} prompts and {len(seeds)} seeds"
-            )
-
-        name = name or time.strftime("%Y%m%d-%H%M%S")
-        save_path = Path(output_dir) / name
-        save_path.mkdir(exist_ok=True, parents=True)
-
-        frame_idx = 0
-        frame_filepaths = []
-        for prompt_a, prompt_b, seed_a, seed_b in zip(prompts, prompts[1:], seeds, seeds[1:]):
-            # Embed Text
-            embed_a = self.embed_text(prompt_a)
-            embed_b = self.embed_text(prompt_b)
-
-            # Get Noise
-            noise_dtype = embed_a.dtype
-            noise_a = self.get_noise(seed_a, noise_dtype, height, width)
-            noise_b = self.get_noise(seed_b, noise_dtype, height, width)
-
-            noise_batch, embeds_batch = None, None
-            T = np.linspace(0.0, 1.0, num_interpolation_steps)
-            for i, t in enumerate(T):
-                noise = slerp(float(t), noise_a, noise_b)
-                embed = torch.lerp(embed_a, embed_b, t)
-
-                noise_batch = noise if noise_batch is None else torch.cat([noise_batch, noise], dim=0)
-                embeds_batch = embed if embeds_batch is None else torch.cat([embeds_batch, embed], dim=0)
-
-                batch_is_ready = embeds_batch.shape[0] == batch_size or i + 1 == T.shape[0]
-                if batch_is_ready:
-                    outputs = self(
-                        latents=noise_batch,
-                        text_embeddings=embeds_batch,
-                        height=height,
-                        width=width,
-                        guidance_scale=guidance_scale,
-                        eta=eta,
-                        num_inference_steps=num_inference_steps,
-                        callback=callback,
-                        callback_steps=callback_steps,
-                    )
-                    noise_batch, embeds_batch = None, None
-
-                    for image in outputs["images"]:
-                        frame_filepath = str(save_path / f"frame_{frame_idx:06d}.png")
-                        image.save(frame_filepath)
-                        frame_filepaths.append(frame_filepath)
-                        frame_idx += 1
-        return frame_filepaths
