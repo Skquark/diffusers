@@ -120,6 +120,8 @@ class ImagicStableDiffusionPipeline(DiffusionPipeline):
         diffusion_model_learning_rate: float = 2e-6,
         text_embedding_optimization_steps: int = 500,
         model_fine_tuning_optimization_steps: int = 1000,
+        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
+        callback_steps: Optional[int] = 1,
         **kwargs,
     ):
         r"""
@@ -156,6 +158,12 @@ class ImagicStableDiffusionPipeline(DiffusionPipeline):
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] instead of a
                 plain tuple.
+            callback (`Callable`, *optional*):
+                A function that will be called every `callback_steps` steps during inference. The function will be
+                called with the following arguments: `callback(step: int, timestep: int, latents: torch.FloatTensor)`.
+            callback_steps (`int`, *optional*, defaults to 1):
+                The frequency at which the `callback` function will be called. If not specified, the callback will be
+                called at every step.
         Returns:
             [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] or `tuple`:
             [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] if `return_dict` is True, otherwise a `tuple.
@@ -258,6 +266,10 @@ class ImagicStableDiffusionPipeline(DiffusionPipeline):
             if accelerator.sync_gradients:
                 progress_bar.update(1)
                 global_step += 1
+                
+                # call the callback, if provided
+                if callback is not None and global_step % callback_steps == 0:
+                    callback(global_step, text_embedding_optimization_steps, noisy_latents)
 
             logs = {"loss": loss.detach().item()}  # , "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
