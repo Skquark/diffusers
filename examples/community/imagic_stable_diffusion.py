@@ -312,6 +312,10 @@ class ImagicStableDiffusionPipeline(DiffusionPipeline):
             if accelerator.sync_gradients:
                 progress_bar.update(1)
                 global_step += 1
+                
+                # call the callback, if provided
+                if callback is not None and global_step % callback_steps == 0:
+                    callback(global_step, text_embedding_optimization_steps, noisy_latents)
 
             logs = {"loss": loss.detach().item()}  # , "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
