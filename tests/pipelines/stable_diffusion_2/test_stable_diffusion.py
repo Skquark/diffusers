@@ -34,7 +34,7 @@ from diffusers import (
 )
 from diffusers.utils import load_numpy, slow, torch_device
 from diffusers.utils.testing_utils import CaptureLogger, require_torch_gpu
-from transformers import CLIPFeatureExtractor, CLIPTextConfig, CLIPTextModel, CLIPTokenizer
+from transformers import CLIPTextConfig, CLIPTextModel, CLIPTokenizer
 
 from ...test_pipelines_common import PipelineTesterMixin
 
@@ -100,21 +100,6 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
         )
         return CLIPTextModel(config)
 
-    @property
-    def dummy_extractor(self):
-        def extract(*args, **kwargs):
-            class Out:
-                def __init__(self):
-                    self.pixel_values = torch.ones([0])
-
-                def to(self, device):
-                    self.pixel_values.to(device)
-                    return self
-
-            return Out()
-
-        return extract
-
     def test_save_pretrained_from_pretrained(self):
         device = "cpu"  # ensure determinism for the device-dependent torch.Generator
         unet = self.dummy_cond_unet
@@ -129,7 +114,6 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
         vae = self.dummy_vae
         bert = self.dummy_text_encoder
         tokenizer = CLIPTokenizer.from_pretrained("hf-internal-testing/tiny-random-clip")
-        feature_extractor = CLIPFeatureExtractor.from_pretrained("hf-internal-testing/tiny-random-clip")
 
         # make sure here that pndm scheduler skips prk
         sd_pipe = StableDiffusionPipeline(
@@ -139,7 +123,8 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
             text_encoder=bert,
             tokenizer=tokenizer,
             safety_checker=None,
-            feature_extractor=feature_extractor,
+            feature_extractor=None,
+            requires_safety_checker=False,
         )
         sd_pipe = sd_pipe.to(device)
         sd_pipe.set_progress_bar_config(disable=None)
@@ -185,7 +170,8 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
             text_encoder=bert,
             tokenizer=tokenizer,
             safety_checker=None,
-            feature_extractor=self.dummy_extractor,
+            feature_extractor=None,
+            requires_safety_checker=False,
         )
         sd_pipe = sd_pipe.to(device)
         sd_pipe.set_progress_bar_config(disable=None)
@@ -231,7 +217,8 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
             text_encoder=bert,
             tokenizer=tokenizer,
             safety_checker=None,
-            feature_extractor=self.dummy_extractor,
+            feature_extractor=None,
+            requires_safety_checker=False,
         )
         sd_pipe = sd_pipe.to(device)
         sd_pipe.set_progress_bar_config(disable=None)
@@ -276,7 +263,8 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
             text_encoder=bert,
             tokenizer=tokenizer,
             safety_checker=None,
-            feature_extractor=self.dummy_extractor,
+            feature_extractor=None,
+            requires_safety_checker=False,
         )
         sd_pipe = sd_pipe.to(device)
         sd_pipe.set_progress_bar_config(disable=None)
@@ -321,7 +309,8 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
             text_encoder=bert,
             tokenizer=tokenizer,
             safety_checker=None,
-            feature_extractor=self.dummy_extractor,
+            feature_extractor=None,
+            requires_safety_checker=False,
         )
         sd_pipe = sd_pipe.to(device)
         sd_pipe.set_progress_bar_config(disable=None)
@@ -366,7 +355,8 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
             text_encoder=bert,
             tokenizer=tokenizer,
             safety_checker=None,
-            feature_extractor=self.dummy_extractor,
+            feature_extractor=None,
+            requires_safety_checker=False,
         )
         sd_pipe = sd_pipe.to(device)
         sd_pipe.set_progress_bar_config(disable=None)
@@ -411,7 +401,8 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
             text_encoder=bert,
             tokenizer=tokenizer,
             safety_checker=None,
-            feature_extractor=self.dummy_extractor,
+            feature_extractor=None,
+            requires_safety_checker=False,
         )
         sd_pipe = sd_pipe.to(device)
         sd_pipe.set_progress_bar_config(disable=None)
@@ -449,7 +440,8 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
             text_encoder=bert,
             tokenizer=tokenizer,
             safety_checker=None,
-            feature_extractor=self.dummy_extractor,
+            feature_extractor=None,
+            requires_safety_checker=False,
         )
         sd_pipe = sd_pipe.to(torch_device)
         sd_pipe.set_progress_bar_config(disable=None)
@@ -475,7 +467,8 @@ class StableDiffusion2PipelineFastTests(PipelineTesterMixin, unittest.TestCase):
             text_encoder=bert,
             tokenizer=tokenizer,
             safety_checker=None,
-            feature_extractor=self.dummy_extractor,
+            feature_extractor=None,
+            requires_safety_checker=False,
         )
         sd_pipe = sd_pipe.to(torch_device)
         sd_pipe.set_progress_bar_config(disable=None)
@@ -572,7 +565,7 @@ class StableDiffusion2PipelineIntegrationTests(unittest.TestCase):
         expected_slice = np.array([0.0548, 0.0626, 0.0612, 0.0611, 0.0706, 0.0586, 0.0843, 0.0333, 0.1197])
         assert np.abs(image_slice.flatten() - expected_slice).max() < 1e-2
 
-    def test_stable_diffusion_memory_chunking(self):
+    def test_stable_diffusion_attention_slicing(self):
         torch.cuda.reset_peak_memory_stats()
         model_id = "stabilityai/stable-diffusion-2-base"
         pipe = StableDiffusionPipeline.from_pretrained(model_id, revision="fp16", torch_dtype=torch.float16)
@@ -609,11 +602,12 @@ class StableDiffusion2PipelineIntegrationTests(unittest.TestCase):
         assert mem_bytes > 3.75 * 10**9
         assert np.abs(image_chunked.flatten() - image.flatten()).max() < 1e-3
 
-    def test_stable_diffusion_text2img_pipeline_fp16(self):
+    def test_stable_diffusion_same_quality(self):
         torch.cuda.reset_peak_memory_stats()
         model_id = "stabilityai/stable-diffusion-2-base"
         pipe = StableDiffusionPipeline.from_pretrained(model_id, revision="fp16", torch_dtype=torch.float16)
         pipe = pipe.to(torch_device)
+        pipe.enable_attention_slicing()
         pipe.set_progress_bar_config(disable=None)
 
         prompt = "a photograph of an astronaut riding a horse"
@@ -624,18 +618,17 @@ class StableDiffusion2PipelineIntegrationTests(unittest.TestCase):
         )
         image_chunked = output_chunked.images
 
+        pipe = StableDiffusionPipeline.from_pretrained(model_id)
+        pipe = pipe.to(torch_device)
         generator = torch.Generator(device=torch_device).manual_seed(0)
-        with torch.autocast(torch_device):
-            output = pipe(
-                [prompt], generator=generator, guidance_scale=7.5, num_inference_steps=10, output_type="numpy"
-            )
-            image = output.images
+        output = pipe([prompt], generator=generator, guidance_scale=7.5, num_inference_steps=10, output_type="numpy")
+        image = output.images
 
         # Make sure results are close enough
         diff = np.abs(image_chunked.flatten() - image.flatten())
         # They ARE different since ops are not run always at the same precision
         # however, they should be extremely close.
-        assert diff.mean() < 2e-2
+        assert diff.mean() < 5e-2
 
     def test_stable_diffusion_text2img_pipeline_default(self):
         expected_image = load_numpy(
@@ -651,7 +644,7 @@ class StableDiffusion2PipelineIntegrationTests(unittest.TestCase):
         prompt = "astronaut riding a horse"
 
         generator = torch.Generator(device=torch_device).manual_seed(0)
-        output = pipe(prompt=prompt, strength=0.75, guidance_scale=7.5, generator=generator, output_type="np")
+        output = pipe(prompt=prompt, guidance_scale=7.5, generator=generator, output_type="np")
         image = output.images[0]
 
         assert image.shape == (512, 512, 3)
@@ -669,12 +662,12 @@ class StableDiffusion2PipelineIntegrationTests(unittest.TestCase):
                 assert latents.shape == (1, 4, 64, 64)
                 latents_slice = latents[0, -3:, -3:, -1]
                 expected_slice = np.array([1.8606, 1.3169, -0.0691, 1.2374, -2.309, 1.077, -0.1084, -0.6774, -2.9594])
-                assert np.abs(latents_slice.flatten() - expected_slice).max() < 1e-3
+                assert np.abs(latents_slice.flatten() - expected_slice).max() < 5e-3
             elif step == 20:
                 latents = latents.detach().cpu().numpy()
                 assert latents.shape == (1, 4, 64, 64)
                 latents_slice = latents[0, -3:, -3:, -1]
-                expected_slice = np.array([1.078, 1.1804, 1.1339, 0.4664, -0.2354, 0.6097, -0.7749, -0.8784, -0.9465])
+                expected_slice = np.array([1.0757, 1.1860, 1.1410, 0.4645, -0.2476, 0.6100, -0.7755, -0.8841, -0.9497])
                 assert np.abs(latents_slice.flatten() - expected_slice).max() < 1e-2
 
         test_callback_fn.has_been_called = False
