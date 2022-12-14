@@ -1163,18 +1163,7 @@ class StableDiffusionLongPromptWeightingPipeline(StableDiffusionPipeline):
             callback_steps=callback_steps,
             **kwargs,
         )
-    # Borrowed from https://github.com/csaluski/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py
-    def get_text_latent_space(self, prompt, guidance_scale = 7.5):
-        # get prompt text embeddings
-        text_input = self.tokenizer(
-            prompt,
-            padding="max_length",
-            max_length=self.tokenizer.model_max_length,
-            truncation=True,
-            return_tensors="pt",
-        )
-        text_embeddings = self.text_encoder(text_input.input_ids.to(self.device))[0]
-    
+
     
     # Borrowed from https://github.com/csaluski/diffusers/blob/main/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py
     def get_text_latent_space(self, prompt, guidance_scale = 7.5):
