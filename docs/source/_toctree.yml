@@ -28,6 +28,8 @@
       title: "Text-Guided Image-Inpainting"
     - local: using-diffusers/depth2img
       title: "Text-Guided Depth-to-Image"
+    - local: using-diffusers/reusing_seeds
+      title: "Reusing seeds for deterministic generation"
     - local: using-diffusers/custom_pipeline_examples
       title: "Community Pipelines"
     - local: using-diffusers/contribute_pipeline
@@ -45,6 +47,8 @@
 - sections:
   - local: optimization/fp16
     title: "Memory and Speed"
+  - local: optimization/xformers
+    title: "xFormers"
   - local: optimization/onnx
     title: "ONNX"
   - local: optimization/open_vino
@@ -118,6 +122,8 @@
       title: "Stochastic Karras VE"
     - local: api/pipelines/dance_diffusion
       title: "Dance Diffusion"
+    - local: api/pipelines/unclip
+      title: "UnCLIP"
     - local: api/pipelines/versatile_diffusion
       title: "Versatile Diffusion"
     - local: api/pipelines/vq_diffusion
