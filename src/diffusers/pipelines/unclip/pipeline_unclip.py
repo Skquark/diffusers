@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import inspect
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Callable
 
 import torch
 from torch.nn import functional as F
@@ -244,6 +244,8 @@ class UnCLIPPipeline(DiffusionPipeline):
         super_res_latents: Optional[torch.FloatTensor] = None,
         prior_guidance_scale: float = 4.0,
         decoder_guidance_scale: float = 8.0,
+        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
+        callback_steps: Optional[int] = 1,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
     ):
@@ -290,6 +292,12 @@ class UnCLIPPipeline(DiffusionPipeline):
                 [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~pipeline_utils.ImagePipelineOutput`] instead of a plain tuple.
+            callback (`Callable`, *optional*):
+                A function that will be called every `callback_steps` steps during inference. The function will be
+                called with the following arguments: `callback(step: int, timestep: int, latents: torch.FloatTensor)`.
+            callback_steps (`int`, *optional*, defaults to 1):
+                The frequency at which the `callback` function will be called. If not specified, the callback will be
+                called at every step.
         """
         if isinstance(prompt, str):
             batch_size = 1
@@ -306,7 +314,7 @@ class UnCLIPPipeline(DiffusionPipeline):
         text_embeddings, text_encoder_hidden_states, text_mask = self._encode_prompt(
             prompt, device, num_images_per_prompt, do_classifier_free_guidance
         )
-
+        current_step = 0
         # prior
 
         self.prior_scheduler.set_timesteps(prior_num_inference_steps, device=device)
@@ -352,6 +360,11 @@ class UnCLIPPipeline(DiffusionPipeline):
                 generator=generator,
                 prev_timestep=prev_timestep,
             ).prev_sample
+
+            # call the callback, if provided
+            current_step += 1
+            if callback is not None and current_step % callback_steps == 0:
+                callback(current_step, t, prior_latents)
 
         prior_latents = self.prior.post_process_latents(prior_latents)
 
@@ -414,6 +427,11 @@ class UnCLIPPipeline(DiffusionPipeline):
                 noise_pred, t, decoder_latents, prev_timestep=prev_timestep, generator=generator
             ).prev_sample
 
+            # call the callback, if provided
+            current_step += 1
+            if callback is not None and current_step % callback_steps == 0:
+                callback(current_step, t, decoder_latents)
+
         decoder_latents = decoder_latents.clamp(-1, 1)
 
         image_small = decoder_latents
@@ -469,6 +487,11 @@ class UnCLIPPipeline(DiffusionPipeline):
             super_res_latents = self.super_res_scheduler.step(
                 noise_pred, t, super_res_latents, prev_timestep=prev_timestep, generator=generator
             ).prev_sample
+
+            # call the callback, if provided
+            current_step += 1
+            if callback is not None and current_step % callback_steps == 0:
+                callback(current_step, t, super_res_latents)
 
         image = super_res_latents
 
