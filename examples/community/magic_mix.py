@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Callable
 
 import torch
 
@@ -80,6 +80,8 @@ class MagicMixPipeline(DiffusionPipeline):
         seed: int = 42,
         steps: int = 50,
         guidance_scale: float = 7.5,
+        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
+        callback_steps: Optional[int] = 1,
     ) -> Image.Image:
         tmin = steps - int(kmin * steps)
         tmax = steps - int(kmax * steps)
@@ -148,5 +150,9 @@ class MagicMixPipeline(DiffusionPipeline):
                 pred = pred_uncond + guidance_scale * (pred_text - pred_uncond)
 
                 latents = self.scheduler.step(pred, t, latents).prev_sample
+
+                # call the callback, if provided
+                if callback is not None and i % callback_steps == 0:
+                    callback(i, t, latents)
 
         return self.decode(latents)
