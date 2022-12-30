@@ -495,6 +495,8 @@ class DiffusionPipeline(ConfigMixin):
                 )
                 if is_safetensors_compatible(info):
                     ignore_patterns.append("*.bin")
+                else:
+                    ignore_patterns.append("*.safetensors")
 
             # download all allow_patterns
             cached_folder = snapshot_download(
@@ -762,7 +764,7 @@ class DiffusionPipeline(ConfigMixin):
         ```
 
         Returns:
-            A dictionaly containing all the modules needed to initialize the pipeline.
+            A dictionary containing all the modules needed to initialize the pipeline.
         """
         expected_modules, optional_parameters = self._get_signature_keys(self)
         components = {
