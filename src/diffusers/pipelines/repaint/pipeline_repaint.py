@@ -21,9 +21,9 @@ import torch
 import PIL
 
 from ...models import UNet2DModel
-from ...pipeline_utils import DiffusionPipeline, ImagePipelineOutput
 from ...schedulers import RePaintScheduler
 from ...utils import PIL_INTERPOLATION, deprecate, logging
+from ..pipeline_utils import DiffusionPipeline, ImagePipelineOutput
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -129,9 +129,8 @@ class RePaintPipeline(DiffusionPipeline):
                 called at every step.
 
         Returns:
-            [`~pipeline_utils.ImagePipelineOutput`] or `tuple`: [`~pipelines.utils.ImagePipelineOutput`] if
-            `return_dict` is True, otherwise a `tuple. When returning a tuple, the first element is a list with the
-            generated images.
+            [`~pipelines.ImagePipelineOutput`] or `tuple`: [`~pipelines.utils.ImagePipelineOutput`] if `return_dict` is
+            True, otherwise a `tuple. When returning a tuple, the first element is a list with the generated images.
         """
 
         message = "Please use `image` instead of `original_image`."
