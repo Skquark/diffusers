@@ -20,6 +20,7 @@ import numpy as np
 import torch
 
 import PIL
+from diffusers.utils import is_accelerate_available
 from packaging import version
 from transformers import CLIPTextModel, CLIPTokenizer, DPTFeatureExtractor, DPTForDepthEstimation
 
@@ -33,7 +34,7 @@ from ...schedulers import (
     LMSDiscreteScheduler,
     PNDMScheduler,
 )
-from ...utils import PIL_INTERPOLATION, deprecate, is_accelerate_available, logging, randn_tensor
+from ...utils import PIL_INTERPOLATION, deprecate, logging
 from ..pipeline_utils import DiffusionPipeline, ImagePipelineOutput
 
 
@@ -380,8 +381,16 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
         else:
             init_latents = torch.cat([init_latents], dim=0)
 
+        rand_device = "cpu" if device.type == "mps" else device
         shape = init_latents.shape
-        noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+        if isinstance(generator, list):
+            shape = (1,) + shape[1:]
+            noise = [
+                torch.randn(shape, generator=generator[i], device=rand_device, dtype=dtype) for i in range(batch_size)
+            ]
+            noise = torch.cat(noise, dim=0).to(device)
+        else:
+            noise = torch.randn(shape, generator=generator, device=rand_device, dtype=dtype).to(device)
 
         # get latents
         init_latents = self.scheduler.add_noise(init_latents, noise, timestep)
@@ -496,29 +505,6 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
                 The frequency at which the `callback` function will be called. If not specified, the callback will be
                 called at every step.
 
-        Examples:
-
-        ```py
-        >>> import torch
-        >>> import requests
-        >>> from PIL import Image
-
-        >>> from diffusers import StableDiffusionDepth2ImgPipeline
-
-        >>> pipe = StableDiffusionDepth2ImgPipeline.from_pretrained(
-        ...     "stabilityai/stable-diffusion-2-depth",
-        ...     torch_dtype=torch.float16,
-        ... )
-        >>> pipe.to("cuda")
-
-
-        >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-        >>> init_image = Image.open(requests.get(url, stream=True).raw)
-        >>> prompt = "two tigers"
-        >>> n_propmt = "bad, deformed, ugly, bad anotomy"
-        >>> image = pipe(prompt=prompt, image=init_image, negative_prompt=n_propmt, strength=0.7).images[0]
-        ```
-
         Returns:
             [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] or `tuple`:
             [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] if `return_dict` is True, otherwise a `tuple.
@@ -542,7 +528,7 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
             prompt, device, num_images_per_prompt, do_classifier_free_guidance, negative_prompt
         )
 
-        # 4. Prepare depth mask
+        # 4. Preprocess image
         depth_mask = self.prepare_depth_map(
             image,
             depth_map,
@@ -552,10 +538,10 @@ class StableDiffusionDepth2ImgPipeline(DiffusionPipeline):
             device,
         )
 
-        # 5. Preprocess image
+        # 5. Prepare depth mask
         image = preprocess(image)
 
-        # 6. Set timesteps
+        # 6. set timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps, num_inference_steps = self.get_timesteps(num_inference_steps, strength, device)
         latent_timestep = timesteps[:1].repeat(batch_size * num_images_per_prompt)

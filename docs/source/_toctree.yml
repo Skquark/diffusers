@@ -91,7 +91,6 @@
     - local: api/outputs
       title: "Outputs"
     title: "Main Classes"
-    
   - sections:
     - local: api/pipelines/overview
       title: "Overview"
@@ -113,21 +112,7 @@
       title: "PNDM"
     - local: api/pipelines/score_sde_ve
       title: "Score SDE VE"
-    - sections:
-      - local: api/pipelines/stable_diffusion/overview
-        title: "Overview"
-      - local: api/pipelines/stable_diffusion/text2img
-        title: "Text-to-Image"
-      - local: api/pipelines/stable_diffusion/img2img
-        title: "Image-to-Image"
-      - local: api/pipelines/stable_diffusion/inpaint
-        title: "Inpaint"
-      - local: api/pipelines/stable_diffusion/depth2img
-        title: "Depth-to-Image"
-      - local: api/pipelines/stable_diffusion/image_variation
-        title: "Image-Variation"  
-      - local: api/pipelines/stable_diffusion/upscale
-        title: "Super-Resolution"  
+    - local: api/pipelines/stable_diffusion
       title: "Stable Diffusion"
     - local: api/pipelines/stable_diffusion_2
       title: "Stable Diffusion 2"
@@ -155,8 +140,6 @@
       title: "DDIM"
     - local: api/schedulers/ddpm
       title: "DDPM"
-    - local: api/schedulers/deis
-      title: "DEIS"
     - local: api/schedulers/singlestep_dpm_solver
       title: "Singlestep DPM-Solver"
     - local: api/schedulers/multistep_dpm_solver

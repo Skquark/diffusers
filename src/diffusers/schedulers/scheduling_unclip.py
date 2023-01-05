@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from ..configuration_utils import ConfigMixin, register_to_config
-from ..utils import BaseOutput, randn_tensor
+from ..utils import BaseOutput
 from .scheduling_utils import SchedulerMixin
 
 
@@ -273,9 +273,15 @@ class UnCLIPScheduler(SchedulerMixin, ConfigMixin):
         # 6. Add noise
         variance = 0
         if t > 0:
-            variance_noise = randn_tensor(
-                model_output.shape, dtype=model_output.dtype, generator=generator, device=model_output.device
-            )
+            device = model_output.device
+            if device.type == "mps":
+                # randn does not work reproducibly on mps
+                variance_noise = torch.randn(model_output.shape, dtype=model_output.dtype, generator=generator)
+                variance_noise = variance_noise.to(device)
+            else:
+                variance_noise = torch.randn(
+                    model_output.shape, generator=generator, device=device, dtype=model_output.dtype
+                )
 
             variance = self._get_variance(
                 t,
