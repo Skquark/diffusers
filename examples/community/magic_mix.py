@@ -1,7 +1,7 @@
-from typing import Union, Callable
+from typing import Union, Callable, Optional
 
 import torch
-
+import PIL
 from diffusers import (
     AutoencoderKL,
     DDIMScheduler,
@@ -10,7 +10,7 @@ from diffusers import (
     PNDMScheduler,
     UNet2DConditionModel,
 )
-from PIL import Image
+#from PIL import Image
 from torchvision import transforms as tfms
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
@@ -44,7 +44,7 @@ class MagicMixPipeline(DiffusionPipeline):
         img = (img / 2 + 0.5).clamp(0, 1)
         img = img.detach().cpu().permute(0, 2, 3, 1).numpy()
         img = (img * 255).round().astype("uint8")
-        return Image.fromarray(img[0])
+        return PIL.Image.fromarray(img[0])
 
     # convert prompt into text embeddings, also unconditional embeddings
     def prep_text(self, prompt):
@@ -72,7 +72,7 @@ class MagicMixPipeline(DiffusionPipeline):
 
     def __call__(
         self,
-        img: Image.Image,
+        img: PIL.Image.Image,
         prompt: str,
         kmin: float = 0.3,
         kmax: float = 0.6,
@@ -82,7 +82,7 @@ class MagicMixPipeline(DiffusionPipeline):
         guidance_scale: float = 7.5,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: Optional[int] = 1,
-    ) -> Image.Image:
+    ) -> PIL.Image.Image:
         tmin = steps - int(kmin * steps)
         tmax = steps - int(kmax * steps)
 
