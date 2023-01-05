@@ -19,6 +19,7 @@ import numpy as np
 import torch
 
 import PIL
+from diffusers.utils import is_accelerate_available
 from packaging import version
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
 
@@ -32,7 +33,7 @@ from ...schedulers import (
     LMSDiscreteScheduler,
     PNDMScheduler,
 )
-from ...utils import PIL_INTERPOLATION, deprecate, is_accelerate_available, logging, randn_tensor
+from ...utils import PIL_INTERPOLATION, deprecate, logging
 from ..pipeline_utils import DiffusionPipeline
 from . import StableDiffusionPipelineOutput
 from .safety_checker import StableDiffusionSafetyChecker
@@ -413,7 +414,7 @@ class StableDiffusionInpaintPipelineLegacy(DiffusionPipeline):
         init_latents_orig = init_latents
 
         # add noise to latents using the timesteps
-        noise = randn_tensor(init_latents.shape, generator=generator, device=self.device, dtype=dtype)
+        noise = torch.randn(init_latents.shape, generator=generator, device=self.device, dtype=dtype)
         init_latents = self.scheduler.add_noise(init_latents, noise, timestep)
         latents = init_latents
         return latents, init_latents_orig, noise

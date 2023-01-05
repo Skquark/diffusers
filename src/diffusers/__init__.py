@@ -67,7 +67,6 @@ else:
     from .schedulers import (
         DDIMScheduler,
         DDPMScheduler,
-        DEISMultistepScheduler,
         DPMSolverMultistepScheduler,
         DPMSolverSinglestepScheduler,
         EulerAncestralDiscreteScheduler,
