@@ -259,8 +259,12 @@ def main(args):
         ), f"Make sure to provide one of the official model names {MODELS_MAP.keys()}"
         args.model_path = download(model_name)
 
-    sample_rate = MODELS_MAP[model_name]["sample_rate"]
-    sample_size = MODELS_MAP[model_name]["sample_size"]
+    if model_name in MODELS_MAP:
+        sample_rate = MODELS_MAP[model_name]["sample_rate"]
+        sample_size = MODELS_MAP[model_name]["sample_size"]
+    else:
+        sample_rate = args.sample_rate
+        sample_size = args.sample_size
 
     config = Object()
     config.sample_size = sample_size
@@ -334,6 +338,8 @@ if __name__ == "__main__":
         "--save", default=True, type=bool, required=False, help="Whether to save the converted model or not."
     )
     parser.add_argument("--checkpoint_path", default=None, type=str, required=True, help="Path to the output model.")
+    parser.add_argument("--sample_rate", default=48000, type=int, required=False, help="Sample Rate of the custom checkpoint.")
+    parser.add_argument("--sample_size", default=65536, type=int, required=False, help="Sample Size of the custom checkpoint.")
     args = parser.parse_args()
 
     main(args)
