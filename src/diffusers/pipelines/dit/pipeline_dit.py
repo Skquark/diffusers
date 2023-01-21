@@ -18,7 +18,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Callable
 
 import torch
 
@@ -92,6 +92,8 @@ class DiTPipeline(DiffusionPipeline):
         num_inference_steps: int = 50,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
+        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
+        callback_steps: Optional[int] = 1,
     ) -> Union[ImagePipelineOutput, Tuple]:
         r"""
         Function invoked when calling the pipeline for generation.
@@ -112,6 +114,12 @@ class DiTPipeline(DiffusionPipeline):
                 [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`ImagePipelineOutput`] instead of a plain tuple.
+            callback (`Callable`, *optional*):
+                A function that will be called every `callback_steps` steps during inference. The function will be
+                called with the following arguments: `callback(step: int, timestep: int, latents: torch.FloatTensor)`.
+            callback_steps (`int`, *optional*, defaults to 1):
+                The frequency at which the `callback` function will be called. If not specified, the callback will be
+                called at every step.
         """
 
         batch_size = len(class_labels)
@@ -176,6 +184,10 @@ class DiTPipeline(DiffusionPipeline):
 
             # compute previous image: x_t -> x_t-1
             latent_model_input = self.scheduler.step(model_output, t, latent_model_input).prev_sample
+
+            # call the callback, if provided
+            if callback is not None and timesteps % callback_steps == 0:
+                callback(t, timesteps, latents)
 
         if guidance_scale > 1:
             latents, _ = latent_model_input.chunk(2, dim=0)
