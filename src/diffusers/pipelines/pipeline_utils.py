@@ -356,7 +356,6 @@ class DiffusionPipeline(ConfigMixin):
                 Adding Custom
                 Pipelines](https://huggingface.co/docs/diffusers/using-diffusers/custom_pipeline_overview)
 
-            torch_dtype (`str` or `torch.dtype`, *optional*):
             force_download (`bool`, *optional*, defaults to `False`):
                 Whether or not to force the (re-)download of the model weights and configuration files, overriding the
                 cached versions if they exist.
@@ -486,10 +485,7 @@ class DiffusionPipeline(ConfigMixin):
             if from_flax:
                 ignore_patterns = ["*.bin", "*.safetensors"]
                 allow_patterns += [
-                    SCHEDULER_CONFIG_NAME,
-                    CONFIG_NAME,
                     FLAX_WEIGHTS_NAME,
-                    cls.config_name,
                 ]
 
             if custom_pipeline is not None:
@@ -505,7 +501,7 @@ class DiffusionPipeline(ConfigMixin):
 
             user_agent = http_user_agent(user_agent)
 
-            if is_safetensors_available():
+            if is_safetensors_available() and not local_files_only:
                 info = model_info(
                     pretrained_model_name_or_path,
                     use_auth_token=use_auth_token,
