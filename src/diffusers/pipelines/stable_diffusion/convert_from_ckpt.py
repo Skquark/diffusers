@@ -18,7 +18,9 @@ import os
 import re
 import tempfile
 
+import requests
 import torch
+from transformers import AutoFeatureExtractor, BertTokenizerFast, CLIPTextModel, CLIPTokenizer, CLIPVisionConfig
 
 from diffusers import (
     AutoencoderKL,
@@ -36,7 +38,6 @@ from diffusers import (
 from diffusers.pipelines.latent_diffusion.pipeline_latent_diffusion import LDMBertConfig, LDMBertModel
 from diffusers.pipelines.paint_by_example import PaintByExampleImageEncoder, PaintByExamplePipeline
 from diffusers.pipelines.stable_diffusion import StableDiffusionSafetyChecker
-from transformers import AutoFeatureExtractor, BertTokenizerFast, CLIPTextModel, CLIPTokenizer, CLIPVisionConfig
 
 from ...utils import is_omegaconf_available, is_safetensors_available
 from ...utils.import_utils import BACKENDS_MAPPING
@@ -860,11 +861,10 @@ def load_pipeline_from_original_stable_diffusion_ckpt(
             if key_name in checkpoint and checkpoint[key_name].shape[-1] == 1024:
                 if not os.path.isfile("v2-inference-v.yaml"):
                     # model_type = "v2"
-                    os.system(
-                        "wget -P"
+                    r = requests.get(
                         " https://raw.githubusercontent.com/Stability-AI/stablediffusion/main/configs/stable-diffusion/v2-inference-v.yaml"
-                        f" -O {original_config_file}"
                     )
+                    open(original_config_file, "wb").write(r.content)
 
                 if global_step == 110000:
                     # v2.1 needs to upcast attention
@@ -872,11 +872,10 @@ def load_pipeline_from_original_stable_diffusion_ckpt(
             else:
                 if not os.path.isfile("v1-inference.yaml"):
                     # model_type = "v1"
-                    os.system(
-                        "wget"
+                    r = requests.get(
                         " https://raw.githubusercontent.com/CompVis/stable-diffusion/main/configs/stable-diffusion/v1-inference.yaml"
-                        f" -O {original_config_file}"
                     )
+                    open(original_config_file, "wb").write(r.content)
 
         original_config = OmegaConf.load(original_config_file)
 
