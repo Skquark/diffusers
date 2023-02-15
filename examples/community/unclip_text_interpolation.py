@@ -1,5 +1,5 @@
 import inspect
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Callable
 
 import torch
 from torch.nn import functional as F
@@ -270,6 +270,8 @@ class UnCLIPTextInterpolationPipeline(DiffusionPipeline):
         decoder_guidance_scale: float = 8.0,
         enable_sequential_cpu_offload=True,
         gpu_id=0,
+        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
+        callback_steps: int = 1,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
     ):
@@ -319,6 +321,12 @@ class UnCLIPTextInterpolationPipeline(DiffusionPipeline):
                 The gpu_id to be passed to enable_sequential_cpu_offload. Only works when enable_sequential_cpu_offload is set to True.
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~pipelines.ImagePipelineOutput`] instead of a plain tuple.
+            callback (`Callable`, *optional*):
+                A function that will be called every `callback_steps` steps during inference. The function will be
+                called with the following arguments: `callback(step: int, timestep: int, latents: torch.FloatTensor)`.
+            callback_steps (`int`, *optional*, defaults to 1):
+                The frequency at which the `callback` function will be called. If not specified, the callback will be
+                called at every step.
         """
 
         if not isinstance(start_prompt, str) or not isinstance(end_prompt, str):
@@ -379,7 +387,7 @@ class UnCLIPTextInterpolationPipeline(DiffusionPipeline):
         )
 
         # prior
-
+        current_step = 0
         self.prior_scheduler.set_timesteps(prior_num_inference_steps, device=device)
         prior_timesteps_tensor = self.prior_scheduler.timesteps
 
@@ -424,7 +432,11 @@ class UnCLIPTextInterpolationPipeline(DiffusionPipeline):
                 generator=generator,
                 prev_timestep=prev_timestep,
             ).prev_sample
-
+            # call the callback, if provided
+            current_step += 1
+            if callback is not None and current_step % callback_steps == 0:
+                callback(current_step, t, prior_latents)
+                
         prior_latents = self.prior.post_process_latents(prior_latents)
 
         image_embeddings = prior_latents
@@ -493,7 +505,12 @@ class UnCLIPTextInterpolationPipeline(DiffusionPipeline):
             decoder_latents = self.decoder_scheduler.step(
                 noise_pred, t, decoder_latents, prev_timestep=prev_timestep, generator=generator
             ).prev_sample
-
+            
+            # call the callback, if provided
+            current_step += 1
+            if callback is not None and current_step % callback_steps == 0:
+                callback(current_step, t, decoder_latents)
+        
         decoder_latents = decoder_latents.clamp(-1, 1)
 
         image_small = decoder_latents
@@ -555,6 +572,11 @@ class UnCLIPTextInterpolationPipeline(DiffusionPipeline):
                 noise_pred, t, super_res_latents, prev_timestep=prev_timestep, generator=generator
             ).prev_sample
 
+            # call the callback, if provided
+            current_step += 1
+            if callback is not None and current_step % callback_steps == 0:
+                callback(current_step, t, super_res_latents)
+            
         image = super_res_latents
         # done super res
 
