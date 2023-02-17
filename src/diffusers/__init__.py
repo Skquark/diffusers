@@ -84,6 +84,7 @@ else:
         SchedulerMixin,
         ScoreSdeVeScheduler,
         UnCLIPScheduler,
+        UniPCMultistepScheduler,
         VQDiffusionScheduler,
     )
     from .training_utils import EMAModel
@@ -109,6 +110,7 @@ else:
         CycleDiffusionPipeline,
         LDMTextToImagePipeline,
         PaintByExamplePipeline,
+        StableDiffusionAttendAndExcitePipeline,
         StableDiffusionDepth2ImgPipeline,
         StableDiffusionImageVariationPipeline,
         StableDiffusionImg2ImgPipeline,
@@ -118,7 +120,11 @@ else:
         StableDiffusionLatentUpscalePipeline,
         StableDiffusionPipeline,
         StableDiffusionPipelineSafe,
+        StableDiffusionPix2PixZeroPipeline,
+        StableDiffusionSAGPipeline,
         StableDiffusionUpscalePipeline,
+        StableUnCLIPImg2ImgPipeline,
+        StableUnCLIPPipeline,
         UnCLIPImageVariationPipeline,
         UnCLIPPipeline,
         VersatileDiffusionDualGuidedPipeline,
