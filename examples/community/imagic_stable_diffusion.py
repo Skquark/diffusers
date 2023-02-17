@@ -21,7 +21,7 @@ from diffusers import DiffusionPipeline
 from diffusers.models import AutoencoderKL, UNet2DConditionModel
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
-from diffusers.schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler, DPMSolverMultistepScheduler, EulerDiscreteScheduler, EulerAncestralDiscreteScheduler
+from diffusers.schedulers import DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler
 from diffusers.utils import logging
 
 
@@ -90,7 +90,7 @@ class ImagicStableDiffusionPipeline(DiffusionPipeline):
         text_encoder: CLIPTextModel,
         tokenizer: CLIPTokenizer,
         unet: UNet2DConditionModel,
-        scheduler: Union[DDIMScheduler, PNDMScheduler, LMSDiscreteScheduler, DPMSolverMultistepScheduler, EulerDiscreteScheduler, EulerAncestralDiscreteScheduler],
+        scheduler: Union[DDIMScheduler, PNDMScheduler, LMSDiscreteScheduler],
         safety_checker: StableDiffusionSafetyChecker,
         feature_extractor: CLIPFeatureExtractor,
     ):
@@ -197,10 +197,6 @@ class ImagicStableDiffusionPipeline(DiffusionPipeline):
             list of `bool`s denoting whether the corresponding generated image likely represents "not-safe-for-work"
             (nsfw) content, according to the `safety_checker`.
         """
-        message = "Please use `image` instead of `init_image`."
-        init_image = deprecate("init_image", "0.14.0", message, take_from=kwargs)
-        image = init_image or image
-
         accelerator = Accelerator(
             gradient_accumulation_steps=1,
             mixed_precision="fp16",

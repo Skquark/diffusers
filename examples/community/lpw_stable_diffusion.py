@@ -15,7 +15,7 @@ import diffusers
 from diffusers import SchedulerMixin, StableDiffusionPipeline
 from diffusers.models import AutoencoderKL, UNet2DConditionModel
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput, StableDiffusionSafetyChecker
-from diffusers.utils import deprecate, logging
+from diffusers.utils import logging
 
 
 try:
@@ -255,7 +255,6 @@ def get_weighted_text_embeddings(
     no_boseos_middle: Optional[bool] = False,
     skip_parsing: Optional[bool] = False,
     skip_weighting: Optional[bool] = False,
-    **kwargs,
 ):
     r"""
     Prompts can be assigned with local weights using brackets. For example,
@@ -685,7 +684,6 @@ class StableDiffusionLongPromptWeightingPipeline(StableDiffusionPipeline):
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         is_cancelled_callback: Optional[Callable[[], bool]] = None,
         callback_steps: int = 1,
-        **kwargs,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -761,10 +759,6 @@ class StableDiffusionLongPromptWeightingPipeline(StableDiffusionPipeline):
             list of `bool`s denoting whether the corresponding generated image likely represents "not-safe-for-work"
             (nsfw) content, according to the `safety_checker`.
         """
-        message = "Please use `image` instead of `init_image`."
-        init_image = deprecate("init_image", "0.14.0", message, take_from=kwargs)
-        image = init_image or image
-
         # 0. Default height and width to unet
         height = height or self.unet.config.sample_size * self.vae_scale_factor
         width = width or self.unet.config.sample_size * self.vae_scale_factor
@@ -887,7 +881,6 @@ class StableDiffusionLongPromptWeightingPipeline(StableDiffusionPipeline):
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         is_cancelled_callback: Optional[Callable[[], bool]] = None,
         callback_steps: int = 1,
-        **kwargs,
     ):
         r"""
         Function for text-to-image generation.
@@ -963,7 +956,6 @@ class StableDiffusionLongPromptWeightingPipeline(StableDiffusionPipeline):
             callback=callback,
             is_cancelled_callback=is_cancelled_callback,
             callback_steps=callback_steps,
-            **kwargs,
         )
 
     def img2img(
@@ -983,7 +975,6 @@ class StableDiffusionLongPromptWeightingPipeline(StableDiffusionPipeline):
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         is_cancelled_callback: Optional[Callable[[], bool]] = None,
         callback_steps: int = 1,
-        **kwargs,
     ):
         r"""
         Function for image-to-image generation.
@@ -1059,7 +1050,6 @@ class StableDiffusionLongPromptWeightingPipeline(StableDiffusionPipeline):
             callback=callback,
             is_cancelled_callback=is_cancelled_callback,
             callback_steps=callback_steps,
-            **kwargs,
         )
 
     def inpaint(
@@ -1080,7 +1070,6 @@ class StableDiffusionLongPromptWeightingPipeline(StableDiffusionPipeline):
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         is_cancelled_callback: Optional[Callable[[], bool]] = None,
         callback_steps: int = 1,
-        **kwargs,
     ):
         r"""
         Function for inpaint.
@@ -1161,7 +1150,6 @@ class StableDiffusionLongPromptWeightingPipeline(StableDiffusionPipeline):
             callback=callback,
             is_cancelled_callback=is_cancelled_callback,
             callback_steps=callback_steps,
-            **kwargs,
         )
 
     
