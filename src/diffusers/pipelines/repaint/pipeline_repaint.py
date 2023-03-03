@@ -21,7 +21,7 @@ import torch
 
 from ...models import UNet2DModel
 from ...schedulers import RePaintScheduler
-from ...utils import PIL_INTERPOLATION, deprecate, logging, randn_tensor
+from ...utils import PIL_INTERPOLATION, logging, randn_tensor
 from ..pipeline_utils import DiffusionPipeline, ImagePipelineOutput
 
 
@@ -92,7 +92,6 @@ class RePaintPipeline(DiffusionPipeline):
         return_dict: bool = True,
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: Optional[int] = 1,
-        **kwargs,
     ) -> Union[ImagePipelineOutput, Tuple]:
         r"""
         Args:
@@ -132,9 +131,7 @@ class RePaintPipeline(DiffusionPipeline):
             True, otherwise a `tuple. When returning a tuple, the first element is a list with the generated images.
         """
 
-        message = "Please use `image` instead of `original_image`."
-        original_image = deprecate("original_image", "0.15.0", message, take_from=kwargs)
-        original_image = original_image or image
+        original_image = image
 
         original_image = _preprocess_image(original_image)
         original_image = original_image.to(device=self.device, dtype=self.unet.dtype)
