@@ -1,191 +1,129 @@
-# Copyright 2023 The HuggingFace Team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Inspired by: https://github.com/haofanwang/ControlNet-for-Diffusers/
 
 import inspect
-import math
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
+import PIL.Image
 import torch
-from torch.nn import functional as F
 from transformers import CLIPFeatureExtractor, CLIPTextModel, CLIPTokenizer
 
-from ...models import AutoencoderKL, UNet2DConditionModel
-from ...models.cross_attention import CrossAttention
-from ...schedulers import KarrasDiffusionSchedulers
-from ...utils import is_accelerate_available, is_accelerate_version, logging, randn_tensor, replace_example_docstring
-from ..pipeline_utils import DiffusionPipeline
-from . import StableDiffusionPipelineOutput
-from .safety_checker import StableDiffusionSafetyChecker
+from diffusers import AutoencoderKL, ControlNetModel, DiffusionPipeline, UNet2DConditionModel, logging
+from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput, StableDiffusionSafetyChecker
+from diffusers.schedulers import KarrasDiffusionSchedulers
+from diffusers.utils import (
+    PIL_INTERPOLATION,
+    is_accelerate_available,
+    is_accelerate_version,
+    randn_tensor,
+    replace_example_docstring,
+)
 
 
-logger = logging.get_logger(__name__)
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 EXAMPLE_DOC_STRING = """
     Examples:
         ```py
+        >>> import numpy as np
         >>> import torch
-        >>> from diffusers import StableDiffusionAttendAndExcitePipeline
+        >>> from PIL import Image
+        >>> from diffusers import ControlNetModel, UniPCMultistepScheduler
+        >>> from diffusers.utils import load_image
 
-        >>> pipe = StableDiffusionAttendAndExcitePipeline.from_pretrained(
-        ...     "CompVis/stable-diffusion-v1-4", torch_dtype=torch.float16
-        ... ).to("cuda")
+        >>> input_image = load_image("https://hf.co/datasets/huggingface/documentation-images/resolve/main/diffusers/input_image_vermeer.png")
+
+        >>> controlnet = ControlNetModel.from_pretrained("lllyasviel/sd-controlnet-canny", torch_dtype=torch.float16)
+
+        >>> pipe_controlnet = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(
+                "runwayml/stable-diffusion-v1-5",
+                controlnet=controlnet,
+                safety_checker=None,
+                torch_dtype=torch.float16
+                )
+
+        >>> pipe_controlnet.scheduler = UniPCMultistepScheduler.from_config(pipe_controlnet.scheduler.config)
+        >>> pipe_controlnet.enable_xformers_memory_efficient_attention()
+        >>> pipe_controlnet.enable_model_cpu_offload()
+
+        # using image with edges for our canny controlnet
+        >>> control_image = load_image(
+            "https://hf.co/datasets/huggingface/documentation-images/resolve/main/diffusers/vermeer_canny_edged.png")
 
 
-        >>> prompt = "a cat and a frog"
+        >>> result_img = pipe_controlnet(controlnet_conditioning_image=control_image,
+                        image=input_image,
+                        prompt="an android robot, cyberpank, digitl art masterpiece",
+                        num_inference_steps=20).images[0]
 
-        >>> # use get_indices function to find out indices of the tokens you want to alter
-        >>> pipe.get_indices(prompt)
-        {0: '<|startoftext|>', 1: 'a</w>', 2: 'cat</w>', 3: 'and</w>', 4: 'a</w>', 5: 'frog</w>', 6: '<|endoftext|>'}
-
-        >>> token_indices = [2, 5]
-        >>> seed = 6141
-        >>> generator = torch.Generator("cuda").manual_seed(seed)
-
-        >>> images = pipe(
-        ...     prompt=prompt,
-        ...     token_indices=token_indices,
-        ...     guidance_scale=7.5,
-        ...     generator=generator,
-        ...     num_inference_steps=50,
-        ...     max_iter_to_alter=25,
-        ... ).images
-
-        >>> image = images[0]
-        >>> image.save(f"../images/{prompt}_{seed}.png")
+        >>> result_img.show()
         ```
 """
 
 
-class AttentionStore:
-    @staticmethod
-    def get_empty_store():
-        return {"down": [], "mid": [], "up": []}
+def prepare_image(image):
+    if isinstance(image, torch.Tensor):
+        # Batch single image
+        if image.ndim == 3:
+            image = image.unsqueeze(0)
 
-    def __call__(self, attn, is_cross: bool, place_in_unet: str):
-        if self.cur_att_layer >= 0 and is_cross:
-            if attn.shape[1] == self.attn_res**2:
-                self.step_store[place_in_unet].append(attn)
+        image = image.to(dtype=torch.float32)
+    else:
+        # preprocess image
+        if isinstance(image, (PIL.Image.Image, np.ndarray)):
+            image = [image]
 
-        self.cur_att_layer += 1
-        if self.cur_att_layer == self.num_att_layers:
-            self.cur_att_layer = 0
-            self.between_steps()
+        if isinstance(image, list) and isinstance(image[0], PIL.Image.Image):
+            image = [np.array(i.convert("RGB"))[None, :] for i in image]
+            image = np.concatenate(image, axis=0)
+        elif isinstance(image, list) and isinstance(image[0], np.ndarray):
+            image = np.concatenate([i[None, :] for i in image], axis=0)
 
-    def between_steps(self):
-        self.attention_store = self.step_store
-        self.step_store = self.get_empty_store()
+        image = image.transpose(0, 3, 1, 2)
+        image = torch.from_numpy(image).to(dtype=torch.float32) / 127.5 - 1.0
 
-    def get_average_attention(self):
-        average_attention = self.attention_store
-        return average_attention
-
-    def aggregate_attention(self, from_where: List[str]) -> torch.Tensor:
-        """Aggregates the attention across the different layers and heads at the specified resolution."""
-        out = []
-        attention_maps = self.get_average_attention()
-        for location in from_where:
-            for item in attention_maps[location]:
-                cross_maps = item.reshape(-1, self.attn_res, self.attn_res, item.shape[-1])
-                out.append(cross_maps)
-        out = torch.cat(out, dim=0)
-        out = out.sum(0) / out.shape[0]
-        return out
-
-    def reset(self):
-        self.cur_att_layer = 0
-        self.step_store = self.get_empty_store()
-        self.attention_store = {}
-
-    def __init__(self, attn_res=16):
-        """
-        Initialize an empty AttentionStore :param step_index: used to visualize only a specific step in the diffusion
-        process
-        """
-        self.num_att_layers = -1
-        self.cur_att_layer = 0
-        self.step_store = self.get_empty_store()
-        self.attention_store = {}
-        self.curr_step_index = 0
-        self.attn_res = attn_res
+    return image
 
 
-class AttendExciteCrossAttnProcessor:
-    def __init__(self, attnstore, place_in_unet):
-        super().__init__()
-        self.attnstore = attnstore
-        self.place_in_unet = place_in_unet
+def prepare_controlnet_conditioning_image(
+    controlnet_conditioning_image, width, height, batch_size, num_images_per_prompt, device, dtype
+):
+    if not isinstance(controlnet_conditioning_image, torch.Tensor):
+        if isinstance(controlnet_conditioning_image, PIL.Image.Image):
+            controlnet_conditioning_image = [controlnet_conditioning_image]
 
-    def __call__(self, attn: CrossAttention, hidden_states, encoder_hidden_states=None, attention_mask=None):
-        batch_size, sequence_length, _ = hidden_states.shape
-        attention_mask = attn.prepare_attention_mask(attention_mask, sequence_length, batch_size)
+        if isinstance(controlnet_conditioning_image[0], PIL.Image.Image):
+            controlnet_conditioning_image = [
+                np.array(i.resize((width, height), resample=PIL_INTERPOLATION["lanczos"]))[None, :]
+                for i in controlnet_conditioning_image
+            ]
+            controlnet_conditioning_image = np.concatenate(controlnet_conditioning_image, axis=0)
+            controlnet_conditioning_image = np.array(controlnet_conditioning_image).astype(np.float32) / 255.0
+            controlnet_conditioning_image = controlnet_conditioning_image.transpose(0, 3, 1, 2)
+            controlnet_conditioning_image = torch.from_numpy(controlnet_conditioning_image)
+        elif isinstance(controlnet_conditioning_image[0], torch.Tensor):
+            controlnet_conditioning_image = torch.cat(controlnet_conditioning_image, dim=0)
 
-        query = attn.to_q(hidden_states)
+    image_batch_size = controlnet_conditioning_image.shape[0]
 
-        is_cross = encoder_hidden_states is not None
-        encoder_hidden_states = encoder_hidden_states if encoder_hidden_states is not None else hidden_states
-        key = attn.to_k(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states)
+    if image_batch_size == 1:
+        repeat_by = batch_size
+    else:
+        # image batch size is the same as prompt batch size
+        repeat_by = num_images_per_prompt
 
-        query = attn.head_to_batch_dim(query)
-        key = attn.head_to_batch_dim(key)
-        value = attn.head_to_batch_dim(value)
+    controlnet_conditioning_image = controlnet_conditioning_image.repeat_interleave(repeat_by, dim=0)
 
-        attention_probs = attn.get_attention_scores(query, key, attention_mask)
+    controlnet_conditioning_image = controlnet_conditioning_image.to(device=device, dtype=dtype)
 
-        # only need to store attention maps during the Attend and Excite process
-        if attention_probs.requires_grad:
-            self.attnstore(attention_probs, is_cross, self.place_in_unet)
-
-        hidden_states = torch.bmm(attention_probs, value)
-        hidden_states = attn.batch_to_head_dim(hidden_states)
-
-        # linear proj
-        hidden_states = attn.to_out[0](hidden_states)
-        # dropout
-        hidden_states = attn.to_out[1](hidden_states)
-
-        return hidden_states
+    return controlnet_conditioning_image
 
 
-class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
-    r"""
-    Pipeline for text-to-image generation using Stable Diffusion and Attend and Excite.
-
-    This model inherits from [`DiffusionPipeline`]. Check the superclass documentation for the generic methods the
-    library implements for all the pipelines (such as downloading or saving, running on a particular device, etc.)
-
-    Args:
-        vae ([`AutoencoderKL`]):
-            Variational Auto-Encoder (VAE) Model to encode and decode images to and from latent representations.
-        text_encoder ([`CLIPTextModel`]):
-            Frozen text-encoder. Stable Diffusion uses the text portion of
-            [CLIP](https://huggingface.co/docs/transformers/model_doc/clip#transformers.CLIPTextModel), specifically
-            the [clip-vit-large-patch14](https://huggingface.co/openai/clip-vit-large-patch14) variant.
-        tokenizer (`CLIPTokenizer`):
-            Tokenizer of class
-            [CLIPTokenizer](https://huggingface.co/docs/transformers/v4.21.0/en/model_doc/clip#transformers.CLIPTokenizer).
-        unet ([`UNet2DConditionModel`]): Conditional U-Net architecture to denoise the encoded image latents.
-        scheduler ([`SchedulerMixin`]):
-            A scheduler to be used in combination with `unet` to denoise the encoded image latents. Can be one of
-            [`DDIMScheduler`], [`LMSDiscreteScheduler`], or [`PNDMScheduler`].
-        safety_checker ([`StableDiffusionSafetyChecker`]):
-            Classification module that estimates whether generated images could be considered offensive or harmful.
-            Please, refer to the [model card](https://huggingface.co/runwayml/stable-diffusion-v1-5) for details.
-        feature_extractor ([`CLIPFeatureExtractor`]):
-            Model that extracts features from generated images to be used as inputs for the `safety_checker`.
+class StableDiffusionControlNetImg2ImgPipeline(DiffusionPipeline):
     """
+    Inspired by: https://github.com/haofanwang/ControlNet-for-Diffusers/
+    """
+
     _optional_components = ["safety_checker", "feature_extractor"]
 
     def __init__(
@@ -194,6 +132,7 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
         text_encoder: CLIPTextModel,
         tokenizer: CLIPTokenizer,
         unet: UNet2DConditionModel,
+        controlnet: ControlNetModel,
         scheduler: KarrasDiffusionSchedulers,
         safety_checker: StableDiffusionSafetyChecker,
         feature_extractor: CLIPFeatureExtractor,
@@ -222,6 +161,7 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
             text_encoder=text_encoder,
             tokenizer=tokenizer,
             unet=unet,
+            controlnet=controlnet,
             scheduler=scheduler,
             safety_checker=safety_checker,
             feature_extractor=feature_extractor,
@@ -229,7 +169,6 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
         self.register_to_config(requires_safety_checker=requires_safety_checker)
 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.enable_vae_slicing
     def enable_vae_slicing(self):
         r"""
         Enable sliced VAE decoding.
@@ -239,7 +178,6 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
         """
         self.vae.enable_slicing()
 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.disable_vae_slicing
     def disable_vae_slicing(self):
         r"""
         Disable sliced VAE decoding. If `enable_vae_slicing` was previously invoked, this method will go back to
@@ -247,34 +185,56 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
         """
         self.vae.disable_slicing()
 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.enable_sequential_cpu_offload
     def enable_sequential_cpu_offload(self, gpu_id=0):
         r"""
         Offloads all models to CPU using accelerate, significantly reducing memory usage. When called, unet,
-        text_encoder, vae and safety checker have their state dicts saved to CPU and then are moved to a
+        text_encoder, vae, controlnet, and safety checker have their state dicts saved to CPU and then are moved to a
         `torch.device('meta') and loaded to GPU only when their specific submodule has its `forward` method called.
         Note that offloading happens on a submodule basis. Memory savings are higher than with
         `enable_model_cpu_offload`, but performance is lower.
         """
-        if is_accelerate_available() and is_accelerate_version(">=", "0.14.0"):
+        if is_accelerate_available():
             from accelerate import cpu_offload
         else:
-            raise ImportError("`enable_sequential_cpu_offload` requires `accelerate v0.14.0` or higher")
+            raise ImportError("Please install accelerate via `pip install accelerate`")
 
         device = torch.device(f"cuda:{gpu_id}")
 
-        if self.device.type != "cpu":
-            self.to("cpu", silence_dtype_warnings=True)
-            torch.cuda.empty_cache()  # otherwise we don't see the memory savings (but they probably exist)
-
-        for cpu_offloaded_model in [self.unet, self.text_encoder, self.vae]:
+        for cpu_offloaded_model in [self.unet, self.text_encoder, self.vae, self.controlnet]:
             cpu_offload(cpu_offloaded_model, device)
 
         if self.safety_checker is not None:
             cpu_offload(self.safety_checker, execution_device=device, offload_buffers=True)
 
+    def enable_model_cpu_offload(self, gpu_id=0):
+        r"""
+        Offloads all models to CPU using accelerate, reducing memory usage with a low impact on performance. Compared
+        to `enable_sequential_cpu_offload`, this method moves one whole model at a time to the GPU when its `forward`
+        method is called, and the model remains in GPU until the next model runs. Memory savings are lower than with
+        `enable_sequential_cpu_offload`, but performance is much better due to the iterative execution of the `unet`.
+        """
+        if is_accelerate_available() and is_accelerate_version(">=", "0.17.0.dev0"):
+            from accelerate import cpu_offload_with_hook
+        else:
+            raise ImportError("`enable_model_offload` requires `accelerate v0.17.0` or higher.")
+
+        device = torch.device(f"cuda:{gpu_id}")
+
+        hook = None
+        for cpu_offloaded_model in [self.text_encoder, self.unet, self.vae]:
+            _, hook = cpu_offload_with_hook(cpu_offloaded_model, device, prev_module_hook=hook)
+
+        if self.safety_checker is not None:
+            # the safety checker can offload the vae again
+            _, hook = cpu_offload_with_hook(self.safety_checker, device, prev_module_hook=hook)
+
+        # control net hook has be manually offloaded as it alternates with unet
+        cpu_offload_with_hook(self.controlnet, device)
+
+        # We'll offload the last model manually.
+        self.final_offload_hook = hook
+
     @property
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline._execution_device
     def _execution_device(self):
         r"""
         Returns the device on which the pipeline's models will be executed. After calling
@@ -292,7 +252,6 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
                 return torch.device(module._hf_hook.execution_device)
         return self.device
 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline._encode_prompt
     def _encode_prompt(
         self,
         prompt,
@@ -431,7 +390,6 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
 
         return prompt_embeds
 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.run_safety_checker
     def run_safety_checker(self, image, device, dtype):
         if self.safety_checker is not None:
             safety_checker_input = self.feature_extractor(self.numpy_to_pil(image), return_tensors="pt").to(device)
@@ -442,7 +400,6 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
             has_nsfw_concept = None
         return image, has_nsfw_concept
 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.decode_latents
     def decode_latents(self, latents):
         latents = 1 / self.vae.config.scaling_factor * latents
         image = self.vae.decode(latents).sample
@@ -451,7 +408,6 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
         image = image.cpu().permute(0, 2, 3, 1).float().numpy()
         return image
 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_extra_step_kwargs
     def prepare_extra_step_kwargs(self, generator, eta):
         # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
         # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
@@ -472,13 +428,15 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
     def check_inputs(
         self,
         prompt,
-        indices,
+        image,
+        controlnet_conditioning_image,
         height,
         width,
         callback_steps,
         negative_prompt=None,
         prompt_embeds=None,
         negative_prompt_embeds=None,
+        strength=None,
     ):
         if height % 8 != 0 or width % 8 != 0:
             raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
@@ -517,18 +475,33 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
                     f" {negative_prompt_embeds.shape}."
                 )
 
-        indices_is_list_ints = isinstance(indices, list) and isinstance(indices[0], int)
-        indices_is_list_list_ints = (
-            isinstance(indices, list) and isinstance(indices[0], list) and isinstance(indices[0][0], int)
+        controlnet_cond_image_is_pil = isinstance(controlnet_conditioning_image, PIL.Image.Image)
+        controlnet_cond_image_is_tensor = isinstance(controlnet_conditioning_image, torch.Tensor)
+        controlnet_cond_image_is_pil_list = isinstance(controlnet_conditioning_image, list) and isinstance(
+            controlnet_conditioning_image[0], PIL.Image.Image
+        )
+        controlnet_cond_image_is_tensor_list = isinstance(controlnet_conditioning_image, list) and isinstance(
+            controlnet_conditioning_image[0], torch.Tensor
         )
 
-        if not indices_is_list_ints and not indices_is_list_list_ints:
-            raise TypeError("`indices` must be a list of ints or a list of a list of ints")
+        if (
+            not controlnet_cond_image_is_pil
+            and not controlnet_cond_image_is_tensor
+            and not controlnet_cond_image_is_pil_list
+            and not controlnet_cond_image_is_tensor_list
+        ):
+            raise TypeError(
+                "image must be passed and be one of PIL image, torch tensor, list of PIL images, or list of torch tensors"
+            )
 
-        if indices_is_list_ints:
-            indices_batch_size = 1
-        elif indices_is_list_list_ints:
-            indices_batch_size = len(indices)
+        if controlnet_cond_image_is_pil:
+            controlnet_cond_image_batch_size = 1
+        elif controlnet_cond_image_is_tensor:
+            controlnet_cond_image_batch_size = controlnet_conditioning_image.shape[0]
+        elif controlnet_cond_image_is_pil_list:
+            controlnet_cond_image_batch_size = len(controlnet_conditioning_image)
+        elif controlnet_cond_image_is_tensor_list:
+            controlnet_cond_image_batch_size = len(controlnet_conditioning_image)
 
         if prompt is not None and isinstance(prompt, str):
             prompt_batch_size = 1
@@ -537,173 +510,128 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
         elif prompt_embeds is not None:
             prompt_batch_size = prompt_embeds.shape[0]
 
-        if indices_batch_size != prompt_batch_size:
+        if controlnet_cond_image_batch_size != 1 and controlnet_cond_image_batch_size != prompt_batch_size:
             raise ValueError(
-                f"indices batch size must be same as prompt batch size. indices batch size: {indices_batch_size}, prompt batch size: {prompt_batch_size}"
+                f"If image batch size is not 1, image batch size must be same as prompt batch size. image batch size: {controlnet_cond_image_batch_size}, prompt batch size: {prompt_batch_size}"
             )
 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_latents
-    def prepare_latents(self, batch_size, num_channels_latents, height, width, dtype, device, generator, latents=None):
-        shape = (batch_size, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
+        if isinstance(image, torch.Tensor):
+            if image.ndim != 3 and image.ndim != 4:
+                raise ValueError("`image` must have 3 or 4 dimensions")
+
+            # if mask_image.ndim != 2 and mask_image.ndim != 3 and mask_image.ndim != 4:
+            #     raise ValueError("`mask_image` must have 2, 3, or 4 dimensions")
+
+            if image.ndim == 3:
+                image_batch_size = 1
+                image_channels, image_height, image_width = image.shape
+            elif image.ndim == 4:
+                image_batch_size, image_channels, image_height, image_width = image.shape
+
+            if image_channels != 3:
+                raise ValueError("`image` must have 3 channels")
+
+            if image.min() < -1 or image.max() > 1:
+                raise ValueError("`image` should be in range [-1, 1]")
+
+        if self.vae.config.latent_channels != self.unet.config.in_channels:
+            raise ValueError(
+                f"The config of `pipeline.unet` expects {self.unet.config.in_channels} but received"
+                f" latent channels: {self.vae.config.latent_channels},"
+                f" Please verify the config of `pipeline.unet` and the `pipeline.vae`"
+            )
+
+        if strength < 0 or strength > 1:
+            raise ValueError(f"The value of strength should in [0.0, 1.0] but is {strength}")
+
+    def get_timesteps(self, num_inference_steps, strength, device):
+        # get the original timestep using init_timestep
+        init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
+
+        t_start = max(num_inference_steps - init_timestep, 0)
+        timesteps = self.scheduler.timesteps[t_start:]
+
+        return timesteps, num_inference_steps - t_start
+
+    def prepare_latents(self, image, timestep, batch_size, num_images_per_prompt, dtype, device, generator=None):
+        if not isinstance(image, (torch.Tensor, PIL.Image.Image, list)):
+            raise ValueError(
+                f"`image` has to be of type `torch.Tensor`, `PIL.Image.Image` or list but is {type(image)}"
+            )
+
+        image = image.to(device=device, dtype=dtype)
+
+        batch_size = batch_size * num_images_per_prompt
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
                 f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
 
-        if latents is None:
-            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+        if isinstance(generator, list):
+            init_latents = [
+                self.vae.encode(image[i : i + 1]).latent_dist.sample(generator[i]) for i in range(batch_size)
+            ]
+            init_latents = torch.cat(init_latents, dim=0)
         else:
-            latents = latents.to(device)
+            init_latents = self.vae.encode(image).latent_dist.sample(generator)
 
-        # scale the initial noise by the standard deviation required by the scheduler
-        latents = latents * self.scheduler.init_noise_sigma
+        init_latents = self.vae.config.scaling_factor * init_latents
+
+        if batch_size > init_latents.shape[0] and batch_size % init_latents.shape[0] == 0:
+            raise ValueError(
+                f"Cannot duplicate `image` of batch size {init_latents.shape[0]} to {batch_size} text prompts."
+            )
+        else:
+            init_latents = torch.cat([init_latents], dim=0)
+
+        shape = init_latents.shape
+        noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+
+        # get latents
+        init_latents = self.scheduler.add_noise(init_latents, noise, timestep)
+        latents = init_latents
+
         return latents
 
-    @staticmethod
-    def _compute_max_attention_per_index(
-        attention_maps: torch.Tensor,
-        indices: List[int],
-    ) -> List[torch.Tensor]:
-        """Computes the maximum attention value for each of the tokens we wish to alter."""
-        attention_for_text = attention_maps[:, :, 1:-1]
-        attention_for_text *= 100
-        attention_for_text = torch.nn.functional.softmax(attention_for_text, dim=-1)
+    def _default_height_width(self, height, width, image):
+        if isinstance(image, list):
+            image = image[0]
 
-        # Shift indices since we removed the first token
-        indices = [index - 1 for index in indices]
+        if height is None:
+            if isinstance(image, PIL.Image.Image):
+                height = image.height
+            elif isinstance(image, torch.Tensor):
+                height = image.shape[3]
 
-        # Extract the maximum values
-        max_indices_list = []
-        for i in indices:
-            image = attention_for_text[:, :, i]
-            smoothing = GaussianSmoothing().to(attention_maps.device)
-            input = F.pad(image.unsqueeze(0).unsqueeze(0), (1, 1, 1, 1), mode="reflect")
-            image = smoothing(input).squeeze(0).squeeze(0)
-            max_indices_list.append(image.max())
-        return max_indices_list
+            height = (height // 8) * 8  # round down to nearest multiple of 8
 
-    def _aggregate_and_get_max_attention_per_token(
-        self,
-        indices: List[int],
-    ):
-        """Aggregates the attention for each token and computes the max activation value for each token to alter."""
-        attention_maps = self.attention_store.aggregate_attention(
-            from_where=("up", "down", "mid"),
-        )
-        max_attention_per_index = self._compute_max_attention_per_index(
-            attention_maps=attention_maps,
-            indices=indices,
-        )
-        return max_attention_per_index
+        if width is None:
+            if isinstance(image, PIL.Image.Image):
+                width = image.width
+            elif isinstance(image, torch.Tensor):
+                width = image.shape[2]
 
-    @staticmethod
-    def _compute_loss(max_attention_per_index: List[torch.Tensor]) -> torch.Tensor:
-        """Computes the attend-and-excite loss using the maximum attention value for each token."""
-        losses = [max(0, 1.0 - curr_max) for curr_max in max_attention_per_index]
-        loss = max(losses)
-        return loss
+            width = (width // 8) * 8  # round down to nearest multiple of 8
 
-    @staticmethod
-    def _update_latent(latents: torch.Tensor, loss: torch.Tensor, step_size: float) -> torch.Tensor:
-        """Update the latent according to the computed loss."""
-        grad_cond = torch.autograd.grad(loss.requires_grad_(True), [latents], retain_graph=True)[0]
-        latents = latents - step_size * grad_cond
-        return latents
-
-    def _perform_iterative_refinement_step(
-        self,
-        latents: torch.Tensor,
-        indices: List[int],
-        loss: torch.Tensor,
-        threshold: float,
-        text_embeddings: torch.Tensor,
-        step_size: float,
-        t: int,
-        max_refinement_steps: int = 20,
-    ):
-        """
-        Performs the iterative latent refinement introduced in the paper. Here, we continuously update the latent code
-        according to our loss objective until the given threshold is reached for all tokens.
-        """
-        iteration = 0
-        target_loss = max(0, 1.0 - threshold)
-        while loss > target_loss:
-            iteration += 1
-
-            latents = latents.clone().detach().requires_grad_(True)
-            self.unet(latents, t, encoder_hidden_states=text_embeddings).sample
-            self.unet.zero_grad()
-
-            # Get max activation value for each subject token
-            max_attention_per_index = self._aggregate_and_get_max_attention_per_token(
-                indices=indices,
-            )
-
-            loss = self._compute_loss(max_attention_per_index)
-
-            if loss != 0:
-                latents = self._update_latent(latents, loss, step_size)
-
-            logger.info(f"\t Try {iteration}. loss: {loss}")
-
-            if iteration >= max_refinement_steps:
-                logger.info(f"\t Exceeded max number of iterations ({max_refinement_steps})! ")
-                break
-
-        # Run one more time but don't compute gradients and update the latents.
-        # We just need to compute the new loss - the grad update will occur below
-        latents = latents.clone().detach().requires_grad_(True)
-        _ = self.unet(latents, t, encoder_hidden_states=text_embeddings).sample
-        self.unet.zero_grad()
-
-        # Get max activation value for each subject token
-        max_attention_per_index = self._aggregate_and_get_max_attention_per_token(
-            indices=indices,
-        )
-        loss = self._compute_loss(max_attention_per_index)
-        logger.info(f"\t Finished with loss of: {loss}")
-        return loss, latents, max_attention_per_index
-
-    def register_attention_control(self):
-        attn_procs = {}
-        cross_att_count = 0
-        for name in self.unet.attn_processors.keys():
-            if name.startswith("mid_block"):
-                place_in_unet = "mid"
-            elif name.startswith("up_blocks"):
-                place_in_unet = "up"
-            elif name.startswith("down_blocks"):
-                place_in_unet = "down"
-            else:
-                continue
-
-            cross_att_count += 1
-            attn_procs[name] = AttendExciteCrossAttnProcessor(
-                attnstore=self.attention_store, place_in_unet=place_in_unet
-            )
-
-        self.unet.set_attn_processor(attn_procs)
-        self.attention_store.num_att_layers = cross_att_count
-
-    def get_indices(self, prompt: str) -> Dict[str, int]:
-        """Utility function to list the indices of the tokens you wish to alte"""
-        ids = self.tokenizer(prompt).input_ids
-        indices = {i: tok for tok, i in zip(self.tokenizer.convert_ids_to_tokens(ids), range(len(ids)))}
-        return indices
+        return height, width
 
     @torch.no_grad()
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
-        prompt: Union[str, List[str]],
-        token_indices: Union[List[int], List[List[int]]],
+        prompt: Union[str, List[str]] = None,
+        image: Union[torch.Tensor, PIL.Image.Image] = None,
+        controlnet_conditioning_image: Union[
+            torch.FloatTensor, PIL.Image.Image, List[torch.FloatTensor], List[PIL.Image.Image]
+        ] = None,
+        strength: float = 0.8,
         height: Optional[int] = None,
         width: Optional[int] = None,
         num_inference_steps: int = 50,
         guidance_scale: float = 7.5,
         negative_prompt: Optional[Union[str, List[str]]] = None,
-        num_images_per_prompt: int = 1,
+        num_images_per_prompt: Optional[int] = 1,
         eta: float = 0.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.FloatTensor] = None,
@@ -714,10 +642,7 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
         callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
         callback_steps: int = 1,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
-        max_iter_to_alter: int = 25,
-        thresholds: dict = {0: 0.05, 10: 0.5, 20: 0.8},
-        scale_factor: int = 20,
-        attn_res: int = 16,
+        controlnet_conditioning_scale: float = 1.0,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -726,8 +651,19 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
             prompt (`str` or `List[str]`, *optional*):
                 The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds`.
                 instead.
-            token_indices (`List[int]`):
-                The token indices to alter with attend-and-excite.
+            image (`torch.Tensor` or `PIL.Image.Image`):
+                `Image`, or tensor representing an image batch which will be inpainted, *i.e.* parts of the image will
+                be masked out with `mask_image` and repainted according to `prompt`.
+            controlnet_conditioning_image (`torch.FloatTensor`, `PIL.Image.Image`, `List[torch.FloatTensor]` or `List[PIL.Image.Image]`):
+                The ControlNet input condition. ControlNet uses this input condition to generate guidance to Unet. If
+                the type is specified as `Torch.FloatTensor`, it is passed to ControlNet as is. PIL.Image.Image` can
+                also be accepted as an image. The control image is automatically resized to fit the output image.
+            strength (`float`, *optional*):
+                Conceptually, indicates how much to transform the reference `image`. Must be between 0 and 1. `image`
+                will be used as a starting point, adding more noise to it the larger the `strength`. The number of
+                denoising steps depends on the amount of noise initially added. When `strength` is 1, added noise will
+                be maximum and the denoising process will run for the full number of iterations specified in
+                `num_inference_steps`. A value of 1, therefore, essentially ignores `image`.
             height (`int`, *optional*, defaults to self.unet.config.sample_size * self.vae_scale_factor):
                 The height in pixels of the generated image.
             width (`int`, *optional*, defaults to self.unet.config.sample_size * self.vae_scale_factor):
@@ -780,17 +716,9 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
                 A kwargs dictionary that if specified is passed along to the `AttnProcessor` as defined under
                 `self.processor` in
                 [diffusers.cross_attention](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/cross_attention.py).
-            max_iter_to_alter (`int`, *optional*, defaults to `25`):
-                Number of denoising steps to apply attend-and-excite. The first <max_iter_to_alter> denoising steps are
-                where the attend-and-excite is applied. I.e. if `max_iter_to_alter` is 25 and there are a total of `30`
-                denoising steps, the first 25 denoising steps will apply attend-and-excite and the last 5 will not
-                apply attend-and-excite.
-            thresholds (`dict`, *optional*, defaults to `{0: 0.05, 10: 0.5, 20: 0.8}`):
-                Dictionary defining the iterations and desired thresholds to apply iterative latent refinement in.
-            scale_factor (`int`, *optional*, default to 20):
-                Scale factor that controls the step size of each Attend and Excite update.
-            attn_res (`int`, *optional*, default to 16):
-                The resolution of most semantic attention map.
+            controlnet_conditioning_scale (`float`, *optional*, defaults to 1.0):
+                The outputs of the controlnet are multiplied by `controlnet_conditioning_scale` before they are added
+                to the residual in the original unet.
 
         Examples:
 
@@ -799,23 +727,24 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
             [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] if `return_dict` is True, otherwise a `tuple.
             When returning a tuple, the first element is a list with the generated images, and the second element is a
             list of `bool`s denoting whether the corresponding generated image likely represents "not-safe-for-work"
-            (nsfw) content, according to the `safety_checker`. :type attention_store: object
+            (nsfw) content, according to the `safety_checker`.
         """
-
         # 0. Default height and width to unet
-        height = height or self.unet.config.sample_size * self.vae_scale_factor
-        width = width or self.unet.config.sample_size * self.vae_scale_factor
+        height, width = self._default_height_width(height, width, controlnet_conditioning_image)
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
             prompt,
-            token_indices,
+            image,
+            # mask_image,
+            controlnet_conditioning_image,
             height,
             width,
             callback_steps,
             negative_prompt,
             prompt_embeds,
             negative_prompt_embeds,
+            strength,
         )
 
         # 2. Define call parameters
@@ -843,102 +772,67 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
             negative_prompt_embeds=negative_prompt_embeds,
         )
 
-        # 4. Prepare timesteps
-        self.scheduler.set_timesteps(num_inference_steps, device=device)
-        timesteps = self.scheduler.timesteps
+        # 4. Prepare mask, image, and controlnet_conditioning_image
+        image = prepare_image(image)
 
-        # 5. Prepare latent variables
-        num_channels_latents = self.unet.in_channels
-        latents = self.prepare_latents(
-            batch_size * num_images_per_prompt,
-            num_channels_latents,
-            height,
+        # mask_image = prepare_mask_image(mask_image)
+
+        controlnet_conditioning_image = prepare_controlnet_conditioning_image(
+            controlnet_conditioning_image,
             width,
+            height,
+            batch_size * num_images_per_prompt,
+            num_images_per_prompt,
+            device,
+            self.controlnet.dtype,
+        )
+
+        # masked_image = image * (mask_image < 0.5)
+
+        # 5. Prepare timesteps
+        self.scheduler.set_timesteps(num_inference_steps, device=device)
+        timesteps, num_inference_steps = self.get_timesteps(num_inference_steps, strength, device)
+        latent_timestep = timesteps[:1].repeat(batch_size * num_images_per_prompt)
+
+        # 6. Prepare latent variables
+        latents = self.prepare_latents(
+            image,
+            latent_timestep,
+            batch_size,
+            num_images_per_prompt,
             prompt_embeds.dtype,
             device,
             generator,
-            latents,
         )
 
-        # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
+        if do_classifier_free_guidance:
+            controlnet_conditioning_image = torch.cat([controlnet_conditioning_image] * 2)
+
+        # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
-        self.attention_store = AttentionStore(attn_res=attn_res)
-        self.register_attention_control()
-
-        # default config for step size from original repo
-        scale_range = np.linspace(1.0, 0.5, len(self.scheduler.timesteps))
-        step_size = scale_factor * np.sqrt(scale_range)
-
-        text_embeddings = (
-            prompt_embeds[batch_size * num_images_per_prompt :] if do_classifier_free_guidance else prompt_embeds
-        )
-
-        if isinstance(token_indices[0], int):
-            token_indices = [token_indices]
-
-        indices = []
-
-        for ind in token_indices:
-            indices = indices + [ind] * num_images_per_prompt
-
-        # 7. Denoising loop
+        # 8. Denoising loop
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
-                # Attend and excite process
-                with torch.enable_grad():
-                    latents = latents.clone().detach().requires_grad_(True)
-                    updated_latents = []
-                    for latent, index, text_embedding in zip(latents, indices, text_embeddings):
-                        # Forward pass of denoising with text conditioning
-                        latent = latent.unsqueeze(0)
-                        text_embedding = text_embedding.unsqueeze(0)
-
-                        self.unet(
-                            latent,
-                            t,
-                            encoder_hidden_states=text_embedding,
-                            cross_attention_kwargs=cross_attention_kwargs,
-                        ).sample
-                        self.unet.zero_grad()
-
-                        # Get max activation value for each subject token
-                        max_attention_per_index = self._aggregate_and_get_max_attention_per_token(
-                            indices=index,
-                        )
-
-                        loss = self._compute_loss(max_attention_per_index=max_attention_per_index)
-
-                        # If this is an iterative refinement step, verify we have reached the desired threshold for all
-                        if i in thresholds.keys() and loss > 1.0 - thresholds[i]:
-                            loss, latent, max_attention_per_index = self._perform_iterative_refinement_step(
-                                latents=latent,
-                                indices=index,
-                                loss=loss,
-                                threshold=thresholds[i],
-                                text_embeddings=text_embedding,
-                                step_size=step_size[i],
-                                t=t,
-                            )
-
-                        # Perform gradient update
-                        if i < max_iter_to_alter:
-                            if loss != 0:
-                                latent = self._update_latent(
-                                    latents=latent,
-                                    loss=loss,
-                                    step_size=step_size[i],
-                                )
-                            logger.info(f"Iteration {i} | Loss: {loss:0.4f}")
-
-                        updated_latents.append(latent)
-
-                    latents = torch.cat(updated_latents, dim=0)
-
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+
+                down_block_res_samples, mid_block_res_sample = self.controlnet(
+                    latent_model_input,
+                    t,
+                    encoder_hidden_states=prompt_embeds,
+                    controlnet_cond=controlnet_conditioning_image,
+                    return_dict=False,
+                )
+
+                down_block_res_samples = [
+                    down_block_res_sample * controlnet_conditioning_scale
+                    for down_block_res_sample in down_block_res_samples
+                ]
+                mid_block_res_sample *= controlnet_conditioning_scale
 
                 # predict the noise residual
                 noise_pred = self.unet(
@@ -946,6 +840,8 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
                     t,
                     encoder_hidden_states=prompt_embeds,
                     cross_attention_kwargs=cross_attention_kwargs,
+                    down_block_additional_residuals=down_block_res_samples,
+                    mid_block_additional_residual=mid_block_res_sample,
                 ).sample
 
                 # perform guidance
@@ -962,82 +858,37 @@ class StableDiffusionAttendAndExcitePipeline(DiffusionPipeline):
                     if callback is not None and i % callback_steps == 0:
                         callback(i, t, latents)
 
-        # 8. Post-processing
-        image = self.decode_latents(latents)
+        # If we do sequential model offloading, let's offload unet and controlnet
+        # manually for max memory savings
+        if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
+            self.unet.to("cpu")
+            self.controlnet.to("cpu")
+            torch.cuda.empty_cache()
 
-        # 9. Run safety checker
-        image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
+        if output_type == "latent":
+            image = latents
+            has_nsfw_concept = None
+        elif output_type == "pil":
+            # 8. Post-processing
+            image = self.decode_latents(latents)
 
-        # 10. Convert to PIL
-        if output_type == "pil":
+            # 9. Run safety checker
+            image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
+
+            # 10. Convert to PIL
             image = self.numpy_to_pil(image)
+        else:
+            # 8. Post-processing
+            image = self.decode_latents(latents)
+
+            # 9. Run safety checker
+            image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
+
+        # Offload last model to CPU
+        if hasattr(self, "final_offload_hook") and self.final_offload_hook is not None:
+            self.final_offload_hook.offload()
 
         if not return_dict:
             return (image, has_nsfw_concept)
 
         return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept)
-
-
-class GaussianSmoothing(torch.nn.Module):
-    """
-    Arguments:
-    Apply gaussian smoothing on a 1d, 2d or 3d tensor. Filtering is performed seperately for each channel in the input
-    using a depthwise convolution.
-        channels (int, sequence): Number of channels of the input tensors. Output will
-            have this number of channels as well.
-        kernel_size (int, sequence): Size of the gaussian kernel. sigma (float, sequence): Standard deviation of the
-        gaussian kernel. dim (int, optional): The number of dimensions of the data.
-            Default value is 2 (spatial).
-    """
-
-    # channels=1, kernel_size=kernel_size, sigma=sigma, dim=2
-    def __init__(
-        self,
-        channels: int = 1,
-        kernel_size: int = 3,
-        sigma: float = 0.5,
-        dim: int = 2,
-    ):
-        super().__init__()
-
-        if isinstance(kernel_size, int):
-            kernel_size = [kernel_size] * dim
-        if isinstance(sigma, float):
-            sigma = [sigma] * dim
-
-        # The gaussian kernel is the product of the
-        # gaussian function of each dimension.
-        kernel = 1
-        meshgrids = torch.meshgrid([torch.arange(size, dtype=torch.float32) for size in kernel_size])
-        for size, std, mgrid in zip(kernel_size, sigma, meshgrids):
-            mean = (size - 1) / 2
-            kernel *= 1 / (std * math.sqrt(2 * math.pi)) * torch.exp(-(((mgrid - mean) / (2 * std)) ** 2))
-
-        # Make sure sum of values in gaussian kernel equals 1.
-        kernel = kernel / torch.sum(kernel)
-
-        # Reshape to depthwise convolutional weight
-        kernel = kernel.view(1, 1, *kernel.size())
-        kernel = kernel.repeat(channels, *[1] * (kernel.dim() - 1))
-
-        self.register_buffer("weight", kernel)
-        self.groups = channels
-
-        if dim == 1:
-            self.conv = F.conv1d
-        elif dim == 2:
-            self.conv = F.conv2d
-        elif dim == 3:
-            self.conv = F.conv3d
-        else:
-            raise RuntimeError("Only 1, 2 and 3 dimensions are supported. Received {}.".format(dim))
-
-    def forward(self, input):
-        """
-        Arguments:
-        Apply gaussian filter to input.
-            input (torch.Tensor): Input to apply gaussian filter on.
-        Returns:
-            filtered (torch.Tensor): Filtered output.
-        """
-        return self.conv(input, weight=self.weight.to(input.dtype), groups=self.groups)
