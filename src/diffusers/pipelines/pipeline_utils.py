@@ -19,6 +19,7 @@ import importlib
 import inspect
 import os
 import re
+import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -506,6 +507,21 @@ class DiffusionPipeline(ConfigMixin):
             # set models
             setattr(self, name, module)
 
+    def __setattr__(self, name: str, value: Any):
+        if hasattr(self, name) and hasattr(self.config, name):
+            # We need to overwrite the config if name exists in config
+            if isinstance(getattr(self.config, name), (tuple, list)):
+                if value is not None and self.config[name][0] is not None:
+                    class_library_tuple = (value.__module__.split(".")[0], value.__class__.__name__)
+                else:
+                    class_library_tuple = (None, None)
+
+                self.register_to_config(**{name: class_library_tuple})
+            else:
+                self.register_to_config(**{name: value})
+
+        super().__setattr__(name, value)
+
     def save_pretrained(
         self,
         save_directory: Union[str, os.PathLike],
@@ -525,11 +541,9 @@ class DiffusionPipeline(ConfigMixin):
             variant (`str`, *optional*):
                 If specified, weights are saved in the format pytorch_model.<variant>.bin.
         """
-        self.save_config(save_directory)
-
         model_index_dict = dict(self.config)
-        model_index_dict.pop("_class_name")
-        model_index_dict.pop("_diffusers_version")
+        model_index_dict.pop("_class_name", None)
+        model_index_dict.pop("_diffusers_version", None)
         model_index_dict.pop("_module", None)
 
         expected_modules, optional_kwargs = self._get_signature_keys(self)
@@ -542,7 +556,6 @@ class DiffusionPipeline(ConfigMixin):
             return True
 
         model_index_dict = {k: v for k, v in model_index_dict.items() if is_saveable_module(k, v)}
-
         for pipeline_component_name in model_index_dict.keys():
             sub_model = getattr(self, pipeline_component_name)
             model_cls = sub_model.__class__
@@ -556,7 +569,13 @@ class DiffusionPipeline(ConfigMixin):
             save_method_name = None
             # search for the model's base class in LOADABLE_CLASSES
             for library_name, library_classes in LOADABLE_CLASSES.items():
-                library = importlib.import_module(library_name)
+                if library_name in sys.modules:
+                    library = importlib.import_module(library_name)
+                else:
+                    logger.info(
+                        f"{library_name} is not installed. Cannot save {pipeline_component_name} as {library_classes} from {library_name}"
+                    )
+
                 for base_class, save_load_methods in library_classes.items():
                     class_candidate = getattr(library, base_class, None)
                     if class_candidate is not None and issubclass(model_cls, class_candidate):
@@ -565,6 +584,12 @@ class DiffusionPipeline(ConfigMixin):
                         break
                 if save_method_name is not None:
                     break
+
+            if save_method_name is None:
+                logger.warn(f"self.{pipeline_component_name}={sub_model} of type {type(sub_model)} cannot be saved.")
+                # make sure that unsaveable components are not tried to be loaded afterward
+                self.register_to_config(**{pipeline_component_name: (None, None)})
+                continue
 
             save_method = getattr(sub_model, save_method_name)
 
@@ -580,6 +605,9 @@ class DiffusionPipeline(ConfigMixin):
                 save_kwargs["variant"] = variant
 
             save_method(os.path.join(save_directory, pipeline_component_name), **save_kwargs)
+
+        # finally save the config
+        self.save_config(save_directory)
 
     def to(
         self,
@@ -619,9 +647,11 @@ class DiffusionPipeline(ConfigMixin):
                 f"It seems like you have activated model offloading by calling `enable_model_cpu_offload`, but are now manually moving the pipeline to GPU. It is strongly recommended against doing so as memory gains from offloading are likely to be lost. Offloading automatically takes care of moving the individual components {', '.join(self.components.keys())} to GPU when needed. To make sure offloading works as expected, you should consider moving the pipeline back to CPU: `pipeline.to('cpu')` or removing the move altogether if you use offloading."
             )
 
-        module_names, _, _ = self.extract_init_dict(dict(self.config))
+        module_names, _ = self._get_signature_keys(self)
+        module_names = [m for m in module_names if hasattr(self, m)]
+
         is_offloaded = pipeline_is_offloaded or pipeline_is_sequentially_offloaded
-        for name in module_names.keys():
+        for name in module_names:
             module = getattr(self, name)
             if isinstance(module, torch.nn.Module):
                 module.to(torch_device, torch_dtype)
@@ -646,8 +676,10 @@ class DiffusionPipeline(ConfigMixin):
         Returns:
             `torch.device`: The torch device on which the pipeline is located.
         """
-        module_names, _, _ = self.extract_init_dict(dict(self.config))
-        for name in module_names.keys():
+        module_names, _ = self._get_signature_keys(self)
+        module_names = [m for m in module_names if hasattr(self, m)]
+
+        for name in module_names:
             module = getattr(self, name)
             if isinstance(module, torch.nn.Module):
                 return module.device
@@ -1420,6 +1452,8 @@ class DiffusionPipeline(ConfigMixin):
                 fn_recursive_set_mem_eff(child)
 
         module_names, _, _ = self.extract_init_dict(dict(self.config))
+        module_names = [m for m in module_names if hasattr(self, m)]
+
         for module_name in module_names:
             module = getattr(self, module_name)
             if isinstance(module, torch.nn.Module):
@@ -1451,6 +1485,8 @@ class DiffusionPipeline(ConfigMixin):
 
     def set_attention_slice(self, slice_size: Optional[int]):
         module_names, _, _ = self.extract_init_dict(dict(self.config))
+        module_names = [m for m in module_names if hasattr(self, m)]
+
         for module_name in module_names:
             module = getattr(self, module_name)
             if isinstance(module, torch.nn.Module) and hasattr(module, "set_attention_slice"):
