@@ -58,9 +58,8 @@ from diffusers.models.attention_processor import (
     SlicedAttnAddedKVProcessor,
 )
 from diffusers.optimization import get_scheduler
-from diffusers.utils import TEXT_ENCODER_TARGET_MODULES, check_min_version, is_wandb_available
+from diffusers.utils import TEXT_ENCODER_ATTN_MODULE, check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
-from diffusers.utils.torch_utils import randn_tensor
 
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -861,9 +860,9 @@ def main(args):
     if args.train_text_encoder:
         text_lora_attn_procs = {}
         for name, module in text_encoder.named_modules():
-            if any(x in name for x in TEXT_ENCODER_TARGET_MODULES):
+            if name.endswith(TEXT_ENCODER_ATTN_MODULE):
                 text_lora_attn_procs[name] = LoRAAttnProcessor(
-                    hidden_size=module.out_features, cross_attention_dim=None
+                    hidden_size=module.out_proj.out_features, cross_attention_dim=None
                 )
         text_encoder_lora_layers = AttnProcsLayers(text_lora_attn_procs)
         temp_pipeline = DiffusionPipeline.from_pretrained(
@@ -1157,14 +1156,8 @@ def main(args):
                         text_encoder_use_attention_mask=args.text_encoder_use_attention_mask,
                     )
 
-                if unet.config.in_channels > channels:
-                    needed_additional_channels = unet.config.in_channels - channels
-                    additional_latents = randn_tensor(
-                        (bsz, needed_additional_channels, height, width),
-                        device=noisy_model_input.device,
-                        dtype=noisy_model_input.dtype,
-                    )
-                    noisy_model_input = torch.cat([additional_latents, noisy_model_input], dim=1)
+                if accelerator.unwrap_model(unet).config.in_channels == channels * 2:
+                    noisy_model_input = torch.cat([noisy_model_input, noisy_model_input], dim=1)
 
                 if args.class_labels_conditioning == "timesteps":
                     class_labels = timesteps
