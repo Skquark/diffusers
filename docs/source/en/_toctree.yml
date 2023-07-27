@@ -88,10 +88,6 @@
       title: Custom Diffusion
     title: Training
   - sections:
-    - local: using-diffusers/rl
-      title: Reinforcement Learning
-    - local: using-diffusers/audio
-      title: Audio
     - local: using-diffusers/other-modalities
       title: Other Modalities
     title: Taking Diffusers Beyond Images
@@ -186,6 +182,8 @@
       title: Audio Diffusion
     - local: api/pipelines/audioldm
       title: AudioLDM
+    - local: api/pipelines/auto_pipeline
+      title: AutoPipeline
     - local: api/pipelines/consistency_models
       title: Consistency Models
     - local: api/pipelines/controlnet
@@ -208,6 +206,8 @@
       title: InstructPix2Pix
     - local: api/pipelines/kandinsky
       title: Kandinsky
+    - local: api/pipelines/kandinsky_v22
+      title: Kandinsky 2.2
     - local: api/pipelines/latent_diffusion
       title: Latent Diffusion
     - local: api/pipelines/panorama
@@ -276,6 +276,8 @@
       title: Unconditional Latent Diffusion
     - local: api/pipelines/unidiffuser
       title: UniDiffuser
+    - local: api/pipelines/value_guided_sampling
+      title: Value-guided sampling
     - local: api/pipelines/versatile_diffusion
       title: Versatile Diffusion
     - local: api/pipelines/vq_diffusion
@@ -331,8 +333,4 @@
     - local: api/schedulers/vq_diffusion
       title: VQDiffusionScheduler
     title: Schedulers
-  - sections:
-    - local: api/experimental/rl
-      title: RL Planning
-    title: Experimental Features
   title: API

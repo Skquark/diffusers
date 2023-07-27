@@ -26,8 +26,8 @@ The abstract of the paper is the following:
 
 ### Available checkpoints:
 
-- *Text-to-Image (1024x1024 resolution)*: [stabilityai/stable-diffusion-xl-base-0.9](https://huggingface.co/stabilityai/stable-diffusion-xl-base-0.9) with [`StableDiffusionXLPipeline`]
-- *Image-to-Image / Refiner (1024x1024 resolution)*: [stabilityai/stable-diffusion-xl-refiner-0.9](https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-0.9) with [`StableDiffusionXLImg2ImgPipeline`]
+- *Text-to-Image (1024x1024 resolution)*: [stabilityai/stable-diffusion-xl-base-1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) with [`StableDiffusionXLPipeline`]
+- *Image-to-Image / Refiner (1024x1024 resolution)*: [stabilityai/stable-diffusion-xl-refiner-1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0) with [`StableDiffusionXLImg2ImgPipeline`]
 
 ## Usage Example
 
@@ -50,7 +50,7 @@ from diffusers import StableDiffusionXLPipeline
 import torch
 
 pipe = StableDiffusionXLPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-base-0.9", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+    "stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
 )
 pipe.to("cuda")
 
@@ -68,7 +68,7 @@ from diffusers import StableDiffusionXLImg2ImgPipeline
 from diffusers.utils import load_image
 
 pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-refiner-0.9", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+    "stabilityai/stable-diffusion-xl-refiner-1.0", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
 )
 pipe = pipe.to("cuda")
 url = "https://huggingface.co/datasets/patrickvonplaten/images/resolve/main/aa_xl/000000009.png"
@@ -88,7 +88,7 @@ from diffusers import StableDiffusionXLInpaintPipeline
 from diffusers.utils import load_image
 
 pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-base-0.9", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+    "stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
 )
 pipe.to("cuda")
 
@@ -104,8 +104,8 @@ image = pipe(prompt=prompt, image=init_image, mask_image=mask_image, num_inferen
 
 ### Refining the image output
 
-In addition to the [base model checkpoint](https://huggingface.co/stabilityai/stable-diffusion-xl-base-0.9), 
-StableDiffusion-XL also includes a [refiner checkpoint](huggingface.co/stabilityai/stable-diffusion-xl-refiner-0.9)
+In addition to the [base model checkpoint](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0), 
+StableDiffusion-XL also includes a [refiner checkpoint](huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0)
 that is specialized in denoising low-noise stage images to generate images of improved high-frequency quality.
 This refiner checkpoint can be used as a "second-step" pipeline after having run the base checkpoint to improve
 image quality.
@@ -119,6 +119,7 @@ a couple community contributors which also helped shape the following `diffusers
 - [SytanSD](https://github.com/SytanSD)
 - [bghira](https://github.com/bghira)
 - [Birch-san](https://github.com/Birch-san)
+- [AmericanPresidentJimmyCarter](https://github.com/AmericanPresidentJimmyCarter)
 
 #### 1.) Ensemble of Expert Denoisers
 
@@ -128,10 +129,16 @@ expert for the high-noise diffusion stage and the refiner serves as the expert f
 The advantage of 1.) over 2.) is that it requires less overall denoising steps and therefore should be significantly
 faster. The drawback is that one cannot really inspect the output of the base model; it will still be heavily denoised.
 
-To use the base model and refiner as an ensemble of expert denoisers, make sure to define the fraction
+To use the base model and refiner as an ensemble of expert denoisers, make sure to define the span
 of timesteps which should be run through the high-noise denoising stage (*i.e.* the base model) and the low-noise
-denoising stage (*i.e.* the refiner model) respectively. This fraction should be set as the [`denoising_end`](https://huggingface.co/docs/diffusers/main/en/api/pipelines/stable_diffusion/stable_diffusion_xl#diffusers.StableDiffusionXLPipeline.__call__.denoising_end) of the base model 
-and as the [`denoising_start`](https://huggingface.co/docs/diffusers/main/en/api/pipelines/stable_diffusion/stable_diffusion_xl#diffusers.StableDiffusionXLImg2ImgPipeline.__call__.denoising_start) of the refiner model.
+denoising stage (*i.e.* the refiner model) respectively. We can set the intervals using the [`denoising_end`](https://huggingface.co/docs/diffusers/main/en/api/pipelines/stable_diffusion/stable_diffusion_xl#diffusers.StableDiffusionXLPipeline.__call__.denoising_end) of the base model 
+and [`denoising_start`](https://huggingface.co/docs/diffusers/main/en/api/pipelines/stable_diffusion/stable_diffusion_xl#diffusers.StableDiffusionXLImg2ImgPipeline.__call__.denoising_start) of the refiner model.
+
+For both `denoising_end` and `denoising_start` a float value between 0 and 1 should be passed.
+When passed, the end and start of denoising will be defined by proportions of discrete timesteps as
+defined by the model schedule.
+Note that this will override `strength` if it is also declared, since the number of denoising steps
+is determined by the discrete timesteps the model was trained on and the declared fractional cutoff.
 
 Let's look at an example.
 First, we import the two pipelines. Since the text encoders and variational autoencoder are the same
@@ -142,12 +149,12 @@ from diffusers import DiffusionPipeline
 import torch
 
 base = DiffusionPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-base-0.9", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+    "stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
 )
-pipe.to("cuda")
+base.to("cuda")
 
 refiner = DiffusionPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-refiner-0.9",
+    "stabilityai/stable-diffusion-xl-refiner-1.0",
     text_encoder_2=base.text_encoder_2,
     vae=base.vae,
     torch_dtype=torch.float16,
@@ -157,31 +164,49 @@ refiner = DiffusionPipeline.from_pretrained(
 refiner.to("cuda")
 ```
 
-Now we define the number of inference steps and the fraction at which the model shall be run through the 
+Now we define the number of inference steps and the point at which the model shall be run through the 
 high-noise denoising stage (*i.e.* the base model).
 
 ```py
 n_steps = 40
-high_noise_frac = 0.7
+high_noise_frac = 0.8
 ```
 
-A fraction of 0.7 means that 70% of the 40 inference steps (28 steps) are run through the base model
-and the remaining 12 steps are run through the refiner. Let's run the two pipelines now.
-Make sure to set `denoising_end` and `denoising_start` to the same values and keep `num_inference_steps`
-constant. Also remember that the output of the base model should be in latent space:
+Stable Diffusion XL base is trained on timesteps 0-999 and Stable Diffusion XL refiner is finetuned
+from the base model on low noise timesteps 0-199 inclusive, so we use the base model for the first
+800 timesteps (high noise) and the refiner for the last 200 timesteps (low noise). Hence, `high_noise_frac`
+is set to 0.8, so that all steps 200-999 (the first 80% of denoising timesteps) are performed by the
+base model and steps 0-199 (the last 20% of denoising timesteps) are performed by the refiner model.
+
+Remember, the denoising process starts at **high value** (high noise) timesteps and ends at
+**low value** (low noise) timesteps.
+
+Let's run the two pipelines now. Make sure to set `denoising_end` and
+`denoising_start` to the same values and keep `num_inference_steps` constant. Also remember that
+the output of the base model should be in latent space:
 
 ```py
 prompt = "A majestic lion jumping from a big stone at night"
 
-image = base(prompt=prompt, num_inference_steps=n_steps, denoising_end=high_noise_frac, output_type="latent").images
-image = refiner(prompt=prompt, num_inference_steps=n_steps, denoising_start=high_noise_frac, image=image).images[0]
+image = base(
+    prompt=prompt,
+    num_inference_steps=n_steps,
+    denoising_end=high_noise_frac,
+    output_type="latent",
+).images
+image = refiner(
+    prompt=prompt,
+    num_inference_steps=n_steps,
+    denoising_start=high_noise_frac,
+    image=image,
+).images[0]
 ```
 
-Let's have a look at the image
+Let's have a look at the images
 
 | Original Image | Ensemble of Denoisers Experts |
 |---|---|
-| ![lion_base](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/lion_base.png) | ![lion_ref](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/lion_refined.png)
+| ![lion_base_timesteps](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/lion_base.png) | ![lion_refined_timesteps](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/lion_refined.png)
 
 If we would have just run the base model on the same 40 steps, the image would have been arguably less detailed (e.g. the lion eyes and nose):
 
@@ -194,7 +219,7 @@ The ensemble-of-experts method works well on all available schedulers!
 #### 2.) Refining the image output from fully denoised base image
 
 In standard [`StableDiffusionImg2ImgPipeline`]-fashion, the fully-denoised image generated of the base model 
-can be further improved using the [refiner checkpoint](huggingface.co/stabilityai/stable-diffusion-xl-refiner-0.9).
+can be further improved using the [refiner checkpoint](huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0).
 
 For this, you simply run the refiner as a normal image-to-image pipeline after the "base" text-to-image 
 pipeline. You can leave the outputs of the base model in latent space.
@@ -204,12 +229,12 @@ from diffusers import DiffusionPipeline
 import torch
 
 pipe = DiffusionPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-base-0.9", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+    "stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
 )
 pipe.to("cuda")
 
 refiner = DiffusionPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-refiner-0.9",
+    "stabilityai/stable-diffusion-xl-refiner-1.0",
     text_encoder_2=pipe.text_encoder_2,
     vae=pipe.vae,
     torch_dtype=torch.float16,
@@ -242,12 +267,12 @@ from diffusers import StableDiffusionXLInpaintPipeline
 from diffusers.utils import load_image
 
 pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-base-0.9", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+    "stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
 )
 pipe.to("cuda")
 
 refiner = StableDiffusionXLInpaintPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-refiner-0.9",
+    "stabilityai/stable-diffusion-xl-refiner-1.0",
     text_encoder_2=pipe.text_encoder_2,
     vae=pipe.vae,
     torch_dtype=torch.float16,
@@ -271,7 +296,6 @@ image = pipe(
     image=init_image,
     mask_image=mask_image,
     num_inference_steps=num_inference_steps,
-    strength=0.80,
     denoising_start=high_noise_frac,
     output_type="latent",
 ).images
@@ -297,12 +321,12 @@ from diffusers import StableDiffusionXLPipeline, StableDiffusionXLImg2ImgPipelin
 import torch
 
 pipe = StableDiffusionXLPipeline.from_single_file(
-    "./sd_xl_base_0.9.safetensors", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+    "./sd_xl_base_1.0.safetensors", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
 )
 pipe.to("cuda")
 
 refiner = StableDiffusionXLImg2ImgPipeline.from_single_file(
-    "./sd_xl_refiner_0.9.safetensors", torch_dtype=torch.float16, use_safetensors=True, variant="fp16"
+    "./sd_xl_refiner_1.0.safetensors", torch_dtype=torch.float16, use_safetensors=True, variant="fp16"
 )
 refiner.to("cuda")
 ```
@@ -375,7 +399,7 @@ from diffusers import StableDiffusionXLPipeline
 import torch
 
 pipe = StableDiffusionXLPipeline.from_pretrained(
-    "stabilityai/stable-diffusion-xl-base-0.9", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
+    "stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16, variant="fp16", use_safetensors=True
 )
 pipe.to("cuda")
 

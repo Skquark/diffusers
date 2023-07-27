@@ -22,7 +22,6 @@ import torch
 from transformers import CLIPTextModelWithProjection, CLIPTokenizer
 
 from ...models import PriorTransformer
-from ...pipelines import DiffusionPipeline
 from ...schedulers import HeunDiscreteScheduler
 from ...utils import (
     BaseOutput,
@@ -32,6 +31,7 @@ from ...utils import (
     randn_tensor,
     replace_example_docstring,
 )
+from ..pipeline_utils import DiffusionPipeline
 from .renderer import ShapERenderer
 
 
@@ -309,7 +309,7 @@ class ShapEPipeline(DiffusionPipeline):
                 scaled_model_input.shape[2], dim=2
             )  # batch_size, num_embeddings, embedding_dim
 
-            if do_classifier_free_guidance is not None:
+            if do_classifier_free_guidance:
                 noise_pred_uncond, noise_pred = noise_pred.chunk(2)
                 noise_pred = noise_pred_uncond + guidance_scale * (noise_pred - noise_pred_uncond)
 
