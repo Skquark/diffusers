@@ -65,12 +65,6 @@ snapshot_download(
 )
 ```
 
-Since SDXL 0.9 weights are gated, we need to be authenticated to be able to use them. So, let's run:
-
-```bash
-huggingface-cli login
-```
-
 This will also allow us to push the trained LoRA parameters to the Hugging Face Hub platform. 
 
 Now, we can launch training using:
@@ -106,6 +100,24 @@ To better track our training experiments, we're using the following flags in the
 * `validation_prompt` and `validation_epochs` to allow the script to do a few validation inference runs. This allows us to qualitatively check if the training is progressing as expected. 
 
 Our experiments were conducted on a single 40GB A100 GPU.
+
+### Dog toy example with < 16GB VRAM
+
+By making use of [`gradient_checkpointing`](https://pytorch.org/docs/stable/checkpoint.html) (which is natively supported in Diffusers), [`xformers`](https://github.com/facebookresearch/xformers), and [`bitsandbytes`](https://github.com/TimDettmers/bitsandbytes) libraries, you can train SDXL LoRAs with less than 16GB of VRAM by adding the following flags to your accelerate launch command:
+
+```diff
++  --enable_xformers_memory_efficient_attention \
++  --gradient_checkpointing \
++  --use_8bit_adam \
++  --mixed_precision="fp16" \
+```
+
+and making sure that you have the following libraries installed:
+
+```
+bitsandbytes>=0.40.0
+xformers>=0.0.20
+```
 
 ### Inference
 

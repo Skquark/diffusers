@@ -215,7 +215,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--resolution",
         type=int,
-        default=512,
+        default=1024,
         help=(
             "The resolution for input images, all the images in the train/validation dataset will be resized to this"
             " resolution"
@@ -401,6 +401,12 @@ def parse_args(input_args=None):
     parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     parser.add_argument(
         "--enable_xformers_memory_efficient_attention", action="store_true", help="Whether or not to use xformers."
+    )
+    parser.add_argument(
+        "--rank",
+        type=int,
+        default=4,
+        help=("The dimension of the LoRA update matrices."),
     )
 
     if input_args is not None:
@@ -638,7 +644,6 @@ def main(args):
             pipeline = StableDiffusionXLPipeline.from_pretrained(
                 args.pretrained_model_name_or_path,
                 torch_dtype=torch_dtype,
-                safety_checker=None,
                 revision=args.revision,
             )
             pipeline.set_progress_bar_config(disable=True)
@@ -749,6 +754,12 @@ def main(args):
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
 
+    if args.gradient_checkpointing:
+        unet.enable_gradient_checkpointing()
+        if args.train_text_encoder:
+            text_encoder_one.gradient_checkpointing_enable()
+            text_encoder_two.gradient_checkpointing_enable()
+
     # now we will add new LoRA weights to the attention layers
     # Set correct lora layers
     unet_lora_attn_procs = {}
@@ -767,7 +778,9 @@ def main(args):
         lora_attn_processor_class = (
             LoRAAttnProcessor2_0 if hasattr(F, "scaled_dot_product_attention") else LoRAAttnProcessor
         )
-        module = lora_attn_processor_class(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
+        module = lora_attn_processor_class(
+            hidden_size=hidden_size, cross_attention_dim=cross_attention_dim, rank=args.rank
+        )
         unet_lora_attn_procs[name] = module
         unet_lora_parameters.extend(module.parameters())
 
@@ -777,8 +790,12 @@ def main(args):
     # So, instead, we monkey-patch the forward calls of its attention-blocks.
     if args.train_text_encoder:
         # ensure that dtype is float32, even if rest of the model that isn't trained is loaded in fp16
-        text_lora_parameters_one = LoraLoaderMixin._modify_text_encoder(text_encoder_one, dtype=torch.float32)
-        text_lora_parameters_two = LoraLoaderMixin._modify_text_encoder(text_encoder_two, dtype=torch.float32)
+        text_lora_parameters_one = LoraLoaderMixin._modify_text_encoder(
+            text_encoder_one, dtype=torch.float32, rank=args.rank
+        )
+        text_lora_parameters_two = LoraLoaderMixin._modify_text_encoder(
+            text_encoder_two, dtype=torch.float32, rank=args.rank
+        )
 
     # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
     def save_model_hook(models, weights, output_dir):
