@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from typing import List, Optional, Union
+from typing import Callable
 
 import PIL.Image
 import torch
@@ -251,6 +252,8 @@ class BlipDiffusionControlNetPipeline(DiffusionPipeline):
         prompt_reps: int = 20,
         output_type: Optional[str] = "pil",
         return_dict: bool = True,
+        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
+        callback_steps: int = 1,
     ):
         """
         Function invoked when calling the pipeline for generation.
@@ -296,6 +299,12 @@ class BlipDiffusionControlNetPipeline(DiffusionPipeline):
                 to amplify the prompt.
             prompt_reps (`int`, *optional*, defaults to 20):
                 The number of times the prompt is repeated along with prompt_strength to amplify the prompt.
+            callback (`Callable`, *optional*):
+                A function that will be called every `callback_steps` steps during inference. The function will be
+                called with the following arguments: `callback(step: int, timestep: int, latents: torch.FloatTensor)`.
+            callback_steps (`int`, *optional*, defaults to 1):
+                The frequency at which the `callback` function will be called. If not specified, the callback will be
+                called at every step.
         Examples:
 
         Returns:
@@ -401,6 +410,8 @@ class BlipDiffusionControlNetPipeline(DiffusionPipeline):
                 t,
                 latents,
             )["prev_sample"]
+            if callback is not None and i % callback_steps == 0:
+                callback(i, t, latents)
         image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
         image = self.image_processor.postprocess(image, output_type=output_type)
 

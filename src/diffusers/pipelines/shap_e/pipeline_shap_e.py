@@ -15,6 +15,7 @@
 import math
 from dataclasses import dataclass
 from typing import List, Optional, Union
+from typing import Callable
 
 import numpy as np
 import PIL.Image
@@ -192,6 +193,8 @@ class ShapEPipeline(DiffusionPipeline):
         frame_size: int = 64,
         output_type: Optional[str] = "pil",  # pil, np, latent, mesh
         return_dict: bool = True,
+        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
+        callback_steps: int = 1,
     ):
         """
         The call function to the pipeline for generation.
@@ -222,6 +225,12 @@ class ShapEPipeline(DiffusionPipeline):
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~pipelines.shap_e.pipeline_shap_e.ShapEPipelineOutput`] instead of a plain
                 tuple.
+            callback (`Callable`, *optional*):
+                A function that will be called every `callback_steps` steps during inference. The function will be
+                called with the following arguments: `callback(step: int, timestep: int, latents: torch.FloatTensor)`.
+            callback_steps (`int`, *optional*, defaults to 1):
+                The frequency at which the `callback` function will be called. If not specified, the callback will be
+                called at every step.
 
         Examples:
 
@@ -290,6 +299,8 @@ class ShapEPipeline(DiffusionPipeline):
                 timestep=t,
                 sample=latents,
             ).prev_sample
+            if callback is not None and i % callback_steps == 0:
+                callback(i, t, latents)
 
         # Offload all models
         self.maybe_free_model_hooks()
