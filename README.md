@@ -37,8 +37,8 @@ limitations under the License.
     </a>
 </p>
 
-### This fork designed for use with Skquark's [**Enhanced Stable Diffusion**](https://colab.research.google.com/github/Skquark/structured-prompt-generator/blob/main/Enhanced_Stable_Diffusion_with_diffusers.ipynb) and [**Stable Diffusion Deluxe** Web App](https://colab.research.google.com/github/Skquark/AI-Friends/blob/main/Stable_Diffusion_Deluxe.ipynb) Colab Notebook
-
+### This fork designed for use with Skquark's [**Stable Diffusion Deluxe** Web App](https://colab.research.google.com/github/Skquark/AI-Friends/blob/main/Stable_Diffusion_Deluxe.ipynb) and [**Enhanced Stable Diffusion**](https://colab.research.google.com/github/Skquark/structured-prompt-generator/blob/main/Enhanced_Stable_Diffusion_with_diffusers.ipynb) Colab Notebooks. Check out [DiffusionDeluxe.com](https://diffusiondeluxe.com) to see what features are integrated into the app's easy UI, created by Alan Bedian.
+---
 🤗 Diffusers is the go-to library for state-of-the-art pretrained diffusion models for generating images, audio, and even 3D structures of molecules. Whether you're looking for a simple inference solution or training your own diffusion models, 🤗 Diffusers is a modular toolbox that supports both. Our library is designed with a focus on [usability over performance](https://huggingface.co/docs/diffusers/conceptual/philosophy#usability-over-performance), [simple over easy](https://huggingface.co/docs/diffusers/conceptual/philosophy#simple-over-easy), and [customizability over abstractions](https://huggingface.co/docs/diffusers/conceptual/philosophy#tweakable-contributorfriendly-over-abstraction).
 
 🤗 Diffusers offers three core components:
