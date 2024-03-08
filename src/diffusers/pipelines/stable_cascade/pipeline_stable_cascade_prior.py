@@ -593,10 +593,10 @@ class StableCascadePriorPipeline(DiffusionPipeline):
                 for k in callback_on_step_end_tensor_inputs:
                     callback_kwargs[k] = locals()[k]
                 callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
-
-                latents = callback_outputs.pop("latents", latents)
-                prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                if callback_outputs is not None:
+                    latents = callback_outputs.pop("latents", latents)
+                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
 
         # Offload all models
         self.maybe_free_model_hooks()
