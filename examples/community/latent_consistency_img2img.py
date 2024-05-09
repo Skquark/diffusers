@@ -240,14 +240,6 @@ class LatentConsistencyModelImg2ImgPipeline(DiffusionPipeline):
 
         return latents
 
-        if latents is None:
-            latents = torch.randn(shape, dtype=dtype).to(device)
-        else:
-            latents = latents.to(device)
-        # scale the initial noise by the standard deviation required by the scheduler
-        latents = latents * self.scheduler.init_noise_sigma
-        return latents
-
     def get_w_embedding(self, w, embedding_dim=512, dtype=torch.float32):
         """
         see https://github.com/google-research/vdm/blob/dc27b98a554f65cdc654b800da5aa1846545d41b/model_vdm.py#L298
@@ -335,17 +327,18 @@ class LatentConsistencyModelImg2ImgPipeline(DiffusionPipeline):
 
         # 5. Prepare latent variable
         num_channels_latents = self.unet.config.in_channels
-        latents = self.prepare_latents(
-            image,
-            latent_timestep,
-            batch_size * num_images_per_prompt,
-            num_channels_latents,
-            height,
-            width,
-            prompt_embeds.dtype,
-            device,
-            latents,
-        )
+        if latents is None:
+            latents = self.prepare_latents(
+                image,
+                latent_timestep,
+                batch_size * num_images_per_prompt,
+                num_channels_latents,
+                height,
+                width,
+                prompt_embeds.dtype,
+                device,
+                latents,
+            )
         bs = batch_size * num_images_per_prompt
 
         # 6. Get Guidance Scale Embedding
