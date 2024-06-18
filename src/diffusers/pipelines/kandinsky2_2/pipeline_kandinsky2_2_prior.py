@@ -516,11 +516,11 @@ class KandinskyV22PriorPipeline(DiffusionPipeline):
                 for k in callback_on_step_end_tensor_inputs:
                     callback_kwargs[k] = locals()[k]
                 callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
-
-                latents = callback_outputs.pop("latents", latents)
-                prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                text_encoder_hidden_states = callback_outputs.pop(
-                    "text_encoder_hidden_states", text_encoder_hidden_states
+                if callback_outputs is not None:
+                    latents = callback_outputs.pop("latents", latents)
+                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                    text_encoder_hidden_states = callback_outputs.pop(
+                        "text_encoder_hidden_states", text_encoder_hidden_states
                 )
                 text_mask = callback_outputs.pop("text_mask", text_mask)
 

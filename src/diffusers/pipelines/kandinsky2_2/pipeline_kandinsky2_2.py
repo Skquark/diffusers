@@ -287,10 +287,10 @@ class KandinskyV22Pipeline(DiffusionPipeline):
                 for k in callback_on_step_end_tensor_inputs:
                     callback_kwargs[k] = locals()[k]
                 callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
-
-                latents = callback_outputs.pop("latents", latents)
-                image_embeds = callback_outputs.pop("image_embeds", image_embeds)
-                negative_image_embeds = callback_outputs.pop("negative_image_embeds", negative_image_embeds)
+                if callback_outputs is not None:
+                    latents = callback_outputs.pop("latents", latents)
+                    image_embeds = callback_outputs.pop("image_embeds", image_embeds)
+                    negative_image_embeds = callback_outputs.pop("negative_image_embeds", negative_image_embeds)
 
             if callback is not None and i % callback_steps == 0:
                 step_idx = i // getattr(self.scheduler, "order", 1)
