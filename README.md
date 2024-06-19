@@ -20,21 +20,11 @@ limitations under the License.
     <br>
 <p>
 <p align="center">
-    <a href="https://github.com/huggingface/diffusers/blob/main/LICENSE">
-        <img alt="GitHub" src="https://img.shields.io/github/license/huggingface/datasets.svg?color=blue">
-    </a>
-    <a href="https://github.com/huggingface/diffusers/releases">
-        <img alt="GitHub release" src="https://img.shields.io/github/release/huggingface/diffusers.svg">
-    </a>
-    <a href="https://pepy.tech/project/diffusers">
-        <img alt="GitHub release" src="https://static.pepy.tech/badge/diffusers/month">
-    </a>
-    <a href="CODE_OF_CONDUCT.md">
-        <img alt="Contributor Covenant" src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg">
-    </a>
-    <a href="https://twitter.com/diffuserslib">
-        <img alt="X account" src="https://img.shields.io/twitter/url/https/twitter.com/diffuserslib.svg?style=social&label=Follow%20%40diffuserslib">
-    </a>
+    <a href="https://github.com/huggingface/diffusers/blob/main/LICENSE"><img alt="GitHub" src="https://img.shields.io/github/license/huggingface/datasets.svg?color=blue"></a>
+    <a href="https://github.com/huggingface/diffusers/releases"><img alt="GitHub release" src="https://img.shields.io/github/release/huggingface/diffusers.svg"></a>
+    <a href="https://pepy.tech/project/diffusers"><img alt="GitHub release" src="https://static.pepy.tech/badge/diffusers/month"></a>
+    <a href="CODE_OF_CONDUCT.md"><img alt="Contributor Covenant" src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg"></a>
+    <a href="https://twitter.com/diffuserslib"><img alt="X account" src="https://img.shields.io/twitter/url/https/twitter.com/diffuserslib.svg?style=social&label=Follow%20%40diffuserslib"></a>
 </p>
 
 ### This fork designed for use with Skquark's [**Stable Diffusion Deluxe** Web App](https://colab.research.google.com/github/Skquark/AI-Friends/blob/main/Stable_Diffusion_Deluxe.ipynb) and [**Enhanced Stable Diffusion**](https://colab.research.google.com/github/Skquark/structured-prompt-generator/blob/main/Enhanced_Stable_Diffusion_with_diffusers.ipynb) Colab Notebooks. Check out [DiffusionDeluxe.com](https://diffusiondeluxe.com) to see what features are integrated into the app's easy UI, created by Alan Bedian.
