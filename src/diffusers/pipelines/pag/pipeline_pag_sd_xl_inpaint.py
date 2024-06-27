@@ -1677,18 +1677,18 @@ class StableDiffusionXLPAGInpaintPipeline(
                     for k in callback_on_step_end_tensor_inputs:
                         callback_kwargs[k] = locals()[k]
                     callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
-
-                    latents = callback_outputs.pop("latents", latents)
-                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
-                    add_text_embeds = callback_outputs.pop("add_text_embeds", add_text_embeds)
-                    negative_pooled_prompt_embeds = callback_outputs.pop(
-                        "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
-                    )
-                    add_time_ids = callback_outputs.pop("add_time_ids", add_time_ids)
-                    add_neg_time_ids = callback_outputs.pop("add_neg_time_ids", add_neg_time_ids)
-                    mask = callback_outputs.pop("mask", mask)
-                    masked_image_latents = callback_outputs.pop("masked_image_latents", masked_image_latents)
+                    if callback_outputs is not None:
+                        latents = callback_outputs.pop("latents", latents)
+                        prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                        negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                        add_text_embeds = callback_outputs.pop("add_text_embeds", add_text_embeds)
+                        negative_pooled_prompt_embeds = callback_outputs.pop(
+                            "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
+                        )
+                        add_time_ids = callback_outputs.pop("add_time_ids", add_time_ids)
+                        add_neg_time_ids = callback_outputs.pop("add_neg_time_ids", add_neg_time_ids)
+                        mask = callback_outputs.pop("mask", mask)
+                        masked_image_latents = callback_outputs.pop("masked_image_latents", masked_image_latents)
 
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
