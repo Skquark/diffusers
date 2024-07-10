@@ -62,6 +62,7 @@ from .stable_diffusion import (
 )
 from .stable_diffusion_3 import (
     StableDiffusion3Img2ImgPipeline,
+    StableDiffusion3InpaintPipeline,
     StableDiffusion3Pipeline,
 )
 from .stable_diffusion_xl import (
@@ -115,6 +116,7 @@ AUTO_INPAINT_PIPELINES_MAPPING = OrderedDict(
     [
         ("stable-diffusion", StableDiffusionInpaintPipeline),
         ("stable-diffusion-xl", StableDiffusionXLInpaintPipeline),
+        ("stable-diffusion-3", StableDiffusion3InpaintPipeline),
         ("if", IFInpaintingPipeline),
         ("kandinsky", KandinskyInpaintCombinedPipeline),
         ("kandinsky22", KandinskyV22InpaintCombinedPipeline),
