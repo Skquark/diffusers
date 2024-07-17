@@ -17,8 +17,8 @@ from collections import OrderedDict
 
 from huggingface_hub.utils import validate_hf_hub_args
 
-from .aura_flow import AuraFlowPipeline
 from ..configuration_utils import ConfigMixin
+from .aura_flow import AuraFlowPipeline
 from .controlnet import (
     StableDiffusionControlNetImg2ImgPipeline,
     StableDiffusionControlNetInpaintPipeline,
@@ -46,7 +46,7 @@ from .kandinsky2_2 import (
     KandinskyV22Pipeline,
 )
 from .kandinsky3 import Kandinsky3Img2ImgPipeline, Kandinsky3Pipeline
-from .kolors import KolorsPipeline, KolorsImg2ImgPipeline
+from .kolors import KolorsImg2ImgPipeline, KolorsPipeline
 from .latent_consistency_models import LatentConsistencyModelImg2ImgPipeline, LatentConsistencyModelPipeline
 from .pag import (
     StableDiffusionControlNetPAGPipeline,
