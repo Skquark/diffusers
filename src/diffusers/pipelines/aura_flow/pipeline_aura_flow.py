@@ -124,6 +124,9 @@ class AuraFlowPipeline(DiffusionPipeline):
     """
 
     _optional_components = []
+    _callback_tensor_inputs = [
+        "latents",
+    ]
     model_cpu_offload_seq = "text_encoder->transformer->vae"
 
     def __init__(
