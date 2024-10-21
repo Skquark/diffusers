@@ -242,7 +242,6 @@ class StableDiffusionXLControlNetPipeline(
         "add_time_ids",
         "negative_pooled_prompt_embeds",
         "negative_add_time_ids",
-        "image",
     ]
 
     def __init__(
@@ -1532,17 +1531,15 @@ class StableDiffusionXLControlNetPipeline(
                         callback_kwargs[k] = locals()[k]
                     callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
 
-                    if callback_outputs is not None:
-                        latents = callback_outputs.pop("latents", latents)
-                        prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                        negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
-                        add_text_embeds = callback_outputs.pop("add_text_embeds", add_text_embeds)
-                        negative_pooled_prompt_embeds = callback_outputs.pop(
-                            "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
-                        )
-                        add_time_ids = callback_outputs.pop("add_time_ids", add_time_ids)
-                        negative_add_time_ids = callback_outputs.pop("negative_add_time_ids", negative_add_time_ids)
-                        image = callback_outputs.pop("image", image)
+                    latents = callback_outputs.pop("latents", latents)
+                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+                    add_text_embeds = callback_outputs.pop("add_text_embeds", add_text_embeds)
+                    negative_pooled_prompt_embeds = callback_outputs.pop(
+                        "negative_pooled_prompt_embeds", negative_pooled_prompt_embeds
+                    )
+                    add_time_ids = callback_outputs.pop("add_time_ids", add_time_ids)
+                    negative_add_time_ids = callback_outputs.pop("negative_add_time_ids", negative_add_time_ids)
 
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
