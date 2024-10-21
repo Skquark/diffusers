@@ -25,7 +25,7 @@ from transformers import (
 )
 
 from ...image_processor import PipelineImageInput, VaeImageProcessor
-from ...loaders import FluxLoraLoaderMixin, FromSingleFileMixin
+from ...loaders import FluxLoraLoaderMixin, FromSingleFileMixin, TextualInversionLoaderMixin
 from ...models.autoencoders import AutoencoderKL
 from ...models.controlnet_flux import FluxControlNetModel, FluxMultiControlNetModel
 from ...models.transformers import FluxTransformer2DModel
@@ -106,7 +106,7 @@ def retrieve_timesteps(
     sigmas: Optional[List[float]] = None,
     **kwargs,
 ):
-    """
+    r"""
     Calls the scheduler's `set_timesteps` method and retrieves timesteps from the scheduler after the call. Handles
     custom timesteps. Any kwargs will be supplied to `scheduler.set_timesteps`.
 
@@ -238,6 +238,9 @@ class FluxControlNetPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleF
         prompt = [prompt] if isinstance(prompt, str) else prompt
         batch_size = len(prompt)
 
+        if isinstance(self, TextualInversionLoaderMixin):
+            prompt = self.maybe_convert_prompt(prompt, self.tokenizer)
+
         text_inputs = self.tokenizer_2(
             prompt,
             padding="max_length",
@@ -280,6 +283,9 @@ class FluxControlNetPipeline(DiffusionPipeline, FluxLoraLoaderMixin, FromSingleF
 
         prompt = [prompt] if isinstance(prompt, str) else prompt
         batch_size = len(prompt)
+
+        if isinstance(self, TextualInversionLoaderMixin):
+            prompt = self.maybe_convert_prompt(prompt, self.tokenizer)
 
         text_inputs = self.tokenizer(
             prompt,
