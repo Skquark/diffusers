@@ -334,6 +334,7 @@ class FluxPriorReduxPipeline(DiffusionPipeline):
     def __call__(
         self,
         image: PipelineImageInput,
+        prompt: Optional[str] = "",
         return_dict: bool = True,
     ):
         r"""
@@ -378,7 +379,7 @@ class FluxPriorReduxPipeline(DiffusionPipeline):
                 pooled_prompt_embeds,
                 _,
             ) = self.encode_prompt(
-                prompt=[""] * batch_size,
+                prompt=[prompt] * batch_size,
                 prompt_2=None,
                 prompt_embeds=None,
                 pooled_prompt_embeds=None,
