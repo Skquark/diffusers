@@ -24,8 +24,17 @@ import torch
 
 from ...models import AutoencoderKL, DiTTransformer2DModel
 from ...schedulers import KarrasDiffusionSchedulers
+from ...utils import is_torch_xla_available
 from ...utils.torch_utils import randn_tensor
 from ..pipeline_utils import DiffusionPipeline, ImagePipelineOutput
+
+
+if is_torch_xla_available():
+    import torch_xla.core.xla_model as xm
+
+    XLA_AVAILABLE = True
+else:
+    XLA_AVAILABLE = False
 
 
 class DiTPipeline(DiffusionPipeline):
@@ -216,6 +225,8 @@ class DiTPipeline(DiffusionPipeline):
             # call the callback, if provided
             if callback is not None and timesteps % callback_steps == 0:
                 callback(t, timesteps, latents)
+            if XLA_AVAILABLE:
+                xm.mark_step()
 
         if guidance_scale > 1:
             latents, _ = latent_model_input.chunk(2, dim=0)
