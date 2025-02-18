@@ -135,6 +135,10 @@ class AuraFlowPipeline(DiffusionPipeline):
         "latents",
     ]
     model_cpu_offload_seq = "text_encoder->transformer->vae"
+    _callback_tensor_inputs = [
+        "latents",
+        "prompt_embeds",
+    ]
 
     def __init__(
         self,
@@ -176,7 +180,6 @@ class AuraFlowPipeline(DiffusionPipeline):
             raise ValueError(
                 f"`callback_on_step_end_tensor_inputs` has to be in {self._callback_tensor_inputs}, but found {[k for k in callback_on_step_end_tensor_inputs if k not in self._callback_tensor_inputs]}"
             )
-
         if prompt is not None and prompt_embeds is not None:
             raise ValueError(
                 f"Cannot forward both `prompt`: {prompt} and `prompt_embeds`: {prompt_embeds}. Please make sure to"
@@ -399,6 +402,14 @@ class AuraFlowPipeline(DiffusionPipeline):
             self.vae.decoder.conv_in.to(dtype)
             self.vae.decoder.mid_block.to(dtype)
 
+    @property
+    def guidance_scale(self):
+        return self._guidance_scale
+
+    @property
+    def num_timesteps(self):
+        return self._num_timesteps
+
     @torch.no_grad()
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
@@ -478,6 +489,15 @@ class AuraFlowPipeline(DiffusionPipeline):
             return_dict (`bool`, *optional*, defaults to `True`):
                 Whether or not to return a [`~pipelines.stable_diffusion_xl.StableDiffusionXLPipelineOutput`] instead
                 of a plain tuple.
+            callback_on_step_end (`Callable`, *optional*):
+                A function that calls at the end of each denoising steps during the inference. The function is called
+                with the following arguments: `callback_on_step_end(self: DiffusionPipeline, step: int, timestep: int,
+                callback_kwargs: Dict)`. `callback_kwargs` will include a list of all tensors as specified by
+                `callback_on_step_end_tensor_inputs`.
+            callback_on_step_end_tensor_inputs (`List`, *optional*):
+                The list of tensor inputs for the `callback_on_step_end` function. The tensors specified in the list
+                will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
+                `._callback_tensor_inputs` attribute of your pipeline class.
             max_sequence_length (`int` defaults to 256): Maximum sequence length to use with the `prompt`.
 
         Examples:
@@ -502,8 +522,10 @@ class AuraFlowPipeline(DiffusionPipeline):
             negative_prompt_embeds,
             prompt_attention_mask,
             negative_prompt_attention_mask,
-            callback_on_step_end_tensor_inputs,
+            callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
         )
+
+        self._guidance_scale = guidance_scale
 
         # 2. Determine batch size.
         if prompt is not None and isinstance(prompt, str):
@@ -561,6 +583,7 @@ class AuraFlowPipeline(DiffusionPipeline):
 
         # 6. Denoising loop
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
+        self._num_timesteps = len(timesteps)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 # expand the latents if we are doing classifier free guidance
@@ -592,8 +615,9 @@ class AuraFlowPipeline(DiffusionPipeline):
                     for k in callback_on_step_end_tensor_inputs:
                         callback_kwargs[k] = locals()[k]
                     callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
-                    if callback_outputs is not None:
-                        latents = callback_outputs.pop("latents", latents)
+
+                    latents = callback_outputs.pop("latents", latents)
+                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
 
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
