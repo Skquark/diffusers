@@ -652,8 +652,6 @@ class LuminaText2ImgPipeline(DiffusionPipeline):
         prompt_attention_mask: Optional[torch.Tensor] = None,
         negative_prompt_attention_mask: Optional[torch.Tensor] = None,
         output_type: Optional[str] = "pil",
-        callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
-        callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         return_dict: bool = True,
         clean_caption: bool = True,
         max_sequence_length: int = 256,
